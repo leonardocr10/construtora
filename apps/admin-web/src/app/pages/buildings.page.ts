@@ -1,3 +1,4 @@
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { ApiService, Building, FloorPlan, errorMessage } from '../core/api.service';
@@ -12,8 +13,11 @@ export function unitNumber(pattern: string, floor: number, final: number, buildi
     .replace(/\{torre\}/g, building);
 }
 
+interface GlbJob { id: string; status: 'QUEUED' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED'; error: string | null; output: { modelVersionId?: string; durationMs?: number } | null; startedAt: string | null; completedAt: string | null }
+interface GlbResult { asset: { id: string; byteSize: string }; modelVersion: { id: string; version: number }; unitNodes: number; durationMs: number }
+
 @Component({
-  imports: [RouterLink], changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [RouterLink, DatePipe], changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="content">
       <div class="head"><div><h1>Torres e pavimentos</h1><p class="sub">Estruture blocos, pavimentos e regras de numeração para cada torre.</p></div></div>
@@ -75,6 +79,24 @@ export function unitNumber(pattern: string, floor: number, final: number, buildi
             <div class="field"><label>Rotação (graus)</label><input class="input" type="number" step="1" [value]="m3().rotation" (input)="set3('rotation', $event)"></div>
             <div class="field"><label>Cores (fachada / destaque)</label><div style="display:flex;gap:8px"><input class="input" type="color" [value]="m3().facade" (input)="set3('facade', $event)"><input class="input" type="color" [value]="m3().accent" (input)="set3('accent', $event)"></div></div>
           </div>
+          <div class="filebox" style="margin-top:14px;align-items:center">
+            <div style="flex:1">
+              <b>Modelo GLB detalhado</b>
+              <p class="small" style="margin:2px 0 0">Gera no Blender local (gratuito) uma maquete com painéis, janelas recuadas, peitoris, frisos e núcleo, usando os parâmetros salvos acima, e registra uma nova versão do modelo 3D. Salve os parâmetros antes de gerar.</p>
+            </div>
+            <button class="btn soft" type="button" [disabled]="glbBusy() || busy()" (click)="generateGlb(b)">{{ glbBusy() ? 'Gerando no Blender… ' + glbElapsed() + ' s' : 'Gerar modelo 3D (Blender)' }}</button>
+          </div>
+          @if (glbBusy()) { <p class="small">O Blender está montando a torre ({{ b.floors.length || b.floorCount || 1 }} pavimentos). Torres altas levam até um minuto.</p> }
+          @if (glbError()) { <div class="notice error" style="margin-top:10px">{{ glbError() }}</div> }
+          @if (glbResult(); as r) {
+            <div class="notice ok" style="margin-top:10px">Versão v{{ r.modelVersion.version }} registrada · {{ r.unitNodes }} volumes de apartamento · {{ (+r.asset.byteSize / 1048576).toFixed(1) }} MB · {{ (r.durationMs / 1000).toFixed(1) }} s. <a [routerLink]="['/empreendimentos', id(), 'estudio-3d']">Ativar no Estúdio 3D</a></div>
+          }
+          @if (glbJobs().length) {
+            <p class="small" style="margin:10px 0 4px"><b>Últimas gerações</b></p>
+            @for (j of glbJobs(); track j.id) {
+              <div class="kv"><span>{{ j.startedAt ? (j.startedAt | date: 'dd/MM HH:mm') : '—' }} · {{ jobLabel(j.status) }}</span><b class="small">{{ j.error ?? (j.output?.modelVersionId ? 'GLB ' + ((j.output.durationMs ?? 0) / 1000).toFixed(1) + ' s' : '') }}</b></div>
+            }
+          }
         </div></form>
       }
 
@@ -114,13 +136,39 @@ export class BuildingsPage {
   readonly finals = () => Array.from({ length: Math.max(1, Math.min(this.perFloor(), 64)) }, (_, i) => String(i + 1).padStart(2, '0'));
   readonly m3 = signal({ floorHeight: 2.9, width: 30, depth: 16, elevators: 2, x: 0, z: 0, rotation: 0, facade: '#eceeea', accent: '#e0622a' });
 
+  readonly glbBusy = signal(false);
+  readonly glbElapsed = signal(0);
+  readonly glbError = signal<string | null>(null);
+  readonly glbResult = signal<GlbResult | null>(null);
+  readonly glbJobs = signal<GlbJob[]>([]);
+  private glbJobsFor = '';
+
   ngOnInit() { this.ctx.select(this.id()); void this.load(); }
+
+  jobLabel(status: GlbJob['status']) { return ({ QUEUED: 'Na fila', PROCESSING: 'Gerando', SUCCEEDED: 'Concluída', FAILED: 'Falhou', CANCELLED: 'Cancelada' })[status]; }
+
+  async loadGlbJobs(b: Building) {
+    this.glbJobsFor = b.id;
+    try { const jobs = await this.api.get<GlbJob[]>(`/buildings/${b.id}/model/jobs`); if (this.glbJobsFor === b.id) this.glbJobs.set(jobs); }
+    catch { this.glbJobs.set([]); }
+  }
+
+  /** Dispara o Blender no servidor (síncrono; o contador mostra o tempo decorrido). */
+  async generateGlb(b: Building) {
+    this.glbBusy.set(true); this.glbError.set(null); this.glbResult.set(null); this.glbElapsed.set(0);
+    const started = Date.now();
+    const timer = setInterval(() => this.glbElapsed.set(Math.round((Date.now() - started) / 1000)), 1000);
+    try { this.glbResult.set(await this.api.post<GlbResult>(`/buildings/${b.id}/model/generate`, {})); }
+    catch (error) { this.glbError.set(errorMessage(error)); }
+    finally { clearInterval(timer); this.glbBusy.set(false); void this.loadGlbJobs(b); }
+  }
 
   setPlan(final: string, planId: string) { this.planByFinal.update((m) => { const next = { ...m }; if (planId) next[final] = planId; else delete next[final]; return next; }); }
   set3(key: string, event: Event) { const raw = val(event); this.m3.update((m) => ({ ...m, [key]: key === 'facade' || key === 'accent' ? raw : Number(raw) })); }
 
   fill3d(b: Building | null) {
     if (!b) return;
+    if (this.glbJobsFor !== b.id) { this.glbResult.set(null); this.glbError.set(null); this.glbJobs.set([]); void this.loadGlbJobs(b); }
     this.m3.set({ floorHeight: Number(b.floorHeight ?? 2.9), width: b.model3d?.width ?? 30, depth: b.model3d?.depth ?? 16, elevators: b.model3d?.elevators ?? 2, x: b.position?.x ?? 0, z: b.position?.z ?? 0, rotation: b.position?.rotation ?? 0, facade: b.model3d?.colors?.facade ?? '#eceeea', accent: b.model3d?.colors?.accent ?? '#e0622a' });
   }
 

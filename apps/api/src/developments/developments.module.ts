@@ -5,5 +5,5 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DevelopmentsController } from './developments.controller';
 import { DevelopmentsService } from './developments.service';
 
-@Module({ imports: [PrismaModule, JwtModule.register({})], controllers: [DevelopmentsController], providers: [DevelopmentsService, JwtAuthGuard] })
+@Module({ imports: [PrismaModule, JwtModule.register({})], controllers: [DevelopmentsController], providers: [DevelopmentsService, JwtAuthGuard], exports: [DevelopmentsService] })
 export class DevelopmentsModule {}

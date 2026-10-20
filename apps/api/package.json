@@ -9,7 +9,8 @@
     "provision:admin": "node ../../scripts/provision-admin.mjs",
     "prisma:generate": "dotenv -e ../../.env -- prisma generate --schema ../../prisma/schema.prisma",
     "prisma:migrate": "dotenv -e ../../.env -- prisma migrate dev --skip-generate --schema ../../prisma/schema.prisma",
-    "prisma:deploy": "dotenv -e ../../.env -- prisma migrate deploy --schema ../../prisma/schema.prisma"
+    "prisma:deploy": "dotenv -e ../../.env -- prisma migrate deploy --schema ../../prisma/schema.prisma",
+    "test": "tsc -p tsconfig.test.json && dotenv -e ../../.env -- node --test test/tower-glb.test.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.0",
