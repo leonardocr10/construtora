@@ -41,7 +41,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [1/4] Verificando o servico MySQL...
+echo [1/5] Verificando o servico MySQL...
 sc query MySQL80 >nul 2>nul
 if not errorlevel 1 net start MySQL80 >nul 2>nul
 
@@ -55,7 +55,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [2/4] Criando banco, banco de sombra e usuario local...
+echo [2/5] Criando banco, banco de sombra e usuario local...
 if /I "%MYSQL_USER%"=="root" (
   mysql --protocol=TCP -h 127.0.0.1 -u root -e "CREATE DATABASE IF NOT EXISTS `%MYSQL_DATABASE%` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE IF NOT EXISTS `%MYSQL_DATABASE%_shadow` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ) else (
@@ -64,25 +64,32 @@ if /I "%MYSQL_USER%"=="root" (
 if errorlevel 1 goto :mysql_failed
 set "MYSQL_PWD="
 
-if not exist "node_modules" (
-  echo [3/4] Instalando dependencias Node.js...
-  call npm install
-  if errorlevel 1 goto :failed
-)
+echo [3/5] Encerrando instancias antigas da API e do painel...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stop-vistahub.ps1"
+timeout /t 2 /nobreak >nul
 
-echo [4/4] Gerando cliente Prisma e aplicando migrations...
-if not exist "node_modules\.prisma\client\query_engine-windows.dll.node" (
-  call npm run prisma:generate
-  if errorlevel 1 goto :failed
-)
+echo [4/5] Instalando/atualizando dependencias Node.js...
+call npm install --no-audit --no-fund
+if errorlevel 1 goto :failed
+
+echo [5/5] Gerando cliente Prisma e aplicando migrations...
+call npm run prisma:generate
+if errorlevel 1 goto :failed
 call npm run db:init
 if errorlevel 1 goto :failed
 
 echo Abrindo API e painel...
-netstat -ano | findstr /R /C:":3000 .*LISTENING" >nul
-if errorlevel 1 (start "VistaHub API" /D "%~dp0" cmd /k npm run dev:api) else (echo API ja esta em execucao na porta 3000.)
-netstat -ano | findstr /R /C:":4200 .*LISTENING" >nul
-if errorlevel 1 (start "VistaHub Painel" /D "%~dp0" cmd /k npm run dev:admin) else (echo Painel ja esta em execucao na porta 4200.)
+start "VistaHub API" /D "%~dp0" cmd /k npm run dev:api
+start "VistaHub Painel" /D "%~dp0" cmd /k npm run dev:admin
+
+echo Aguardando a API responder...
+powershell -NoProfile -Command "for($i=0;$i -lt 60;$i++){ try { Invoke-WebRequest -UseBasicParsing http://localhost:3000/api/v1/health/db -TimeoutSec 2 | Out-Null; exit 0 } catch { Start-Sleep 2 } }; exit 1"
+if errorlevel 1 (echo [AVISO] A API ainda nao respondeu. Veja a janela "VistaHub API".) else (echo [OK] API conectada ao MySQL.)
+
+echo Aguardando o painel...
+powershell -NoProfile -Command "for($i=0;$i -lt 90;$i++){ try { Invoke-WebRequest -UseBasicParsing http://localhost:4200 -TimeoutSec 2 | Out-Null; exit 0 } catch { Start-Sleep 2 } }; exit 1"
+if errorlevel 1 (echo [AVISO] O painel ainda nao respondeu. Veja a janela "VistaHub Painel".) else (start "" http://localhost:4200)
+
 echo.
 echo Servicos iniciados. Painel: http://localhost:4200
 echo Documentacao da API: http://localhost:3000/api/docs
