@@ -7,6 +7,8 @@ const roadWidth: Record<string, number> = {
   motorway: 22, trunk: 20, primary: 16, secondary: 13, tertiary: 11, unclassified: 8, residential: 8, living_street: 6,
   service: 4.5, motorway_link: 9, trunk_link: 9, primary_link: 9, secondary_link: 8, tertiary_link: 8,
 };
+const labeledRoads = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary']);
+const maxRoadLabels = 8;
 const houseRoads = new Set(['residential', 'living_street', 'unclassified', 'tertiary']);
 
 /** Faixa plana ao longo de uma polilinha (ruas). */
@@ -115,15 +117,18 @@ export function buildSurroundings(data: Surroundings, exclusion: Point[]): Surro
   const grid = new SegmentGrid();
   const asphalt: THREE.BufferGeometry[] = []; const curbs: THREE.BufferGeometry[] = [];
   const roadLabels: SurroundingsResult['roadLabels'] = [];
-  const named = new Map<string, { points: Point[]; length: number }>();
+  const named = new Map<string, { points: Point[]; length: number; total: number }>();
   for (const road of data.roads) {
     const width = roadWidth[road.kind]; if (!width || road.points.length < 2) continue;
     curbs.push(ribbon(road.points, width + 2.2, 0.06));
     asphalt.push(ribbon(road.points, width, 0.1));
     for (let i = 1; i < road.points.length; i++) grid.add(road.points[i - 1], road.points[i], width / 2);
-    if (road.name && width >= 8) {
+    // Só as vias principais recebem nome na tela; ruas de bairro ficariam amontoadas.
+    if (road.name && labeledRoads.has(road.kind)) {
       let length = 0; for (let i = 1; i < road.points.length; i++) length += Math.hypot(road.points[i][0] - road.points[i - 1][0], road.points[i][1] - road.points[i - 1][1]);
-      if (length > (named.get(road.name)?.length ?? 0)) named.set(road.name, { points: road.points, length });
+      const current = named.get(road.name);
+      if (!current) named.set(road.name, { points: road.points, length, total: length });
+      else { current.total += length; if (length > current.length) Object.assign(current, { points: road.points, length }); }
     }
   }
   if (curbs.length) { const mesh = new THREE.Mesh(mergeGeometries(curbs), new THREE.MeshLambertMaterial({ map: tiled(pavingTile(256, 64), 4), side: THREE.DoubleSide })); mesh.receiveShadow = true; group.add(mesh); }
@@ -147,9 +152,14 @@ export function buildSurroundings(data: Surroundings, exclusion: Point[]): Surro
     dashes.forEach((m, i) => marks.setMatrixAt(i, m));
     group.add(marks);
   }
-  for (const [name, { points }] of named) {
+  // As mais extensas primeiro, no máximo maxRoadLabels, e nunca duas muito próximas.
+  const ranked = [...named].filter(([, r]) => r.total >= 150).sort((a, b) => b[1].total - a[1].total);
+  for (const [name, { points }] of ranked) {
+    if (roadLabels.length >= maxRoadLabels) break;
     const mid = points[Math.floor(points.length / 2)];
-    if (Math.hypot(mid[0], mid[1]) < data.radius * 0.9) roadLabels.push({ name, position: new THREE.Vector3(mid[0], 2, mid[1]) });
+    const position = new THREE.Vector3(mid[0], 2, mid[1]);
+    if (Math.hypot(mid[0], mid[1]) > data.radius * 0.9 || roadLabels.some((l) => l.position.distanceTo(position) < 120)) continue;
+    roadLabels.push({ name, position });
   }
 
   const mapped = data.buildings.filter((b) => b.points.length > 3).map((b) => extruded(b.points, Math.max(3, Math.min(b.height, 60))));
