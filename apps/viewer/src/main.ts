@@ -50,6 +50,7 @@ async function start() {
   createLabels();
   bindPicking();
   bindTowerHover(world, site.towers, () => state.tower);
+  bindCompass();
   if (import.meta.env.DEV) Object.assign(window, { __vista: { world, site } }); // inspeção no navegador durante o desenvolvimento
   overview(0.01);
 
@@ -100,16 +101,41 @@ function renderViews() {
     ['⊡', 'Topo', () => presetView(0, 2, 420)],
   ];
   const el = $('views');
-  el.innerHTML = `${views.map(([icon, label], i) => `<button data-i="${i}" title="Vista ${label.toLowerCase()}">${icon}<span class="t">${label}</span></button>`).join('')}<hr>
+  el.classList.toggle('collapsed', viewsCollapsed);
+  el.innerHTML = `<button id="views-toggle" title="Mostrar ou recolher as vistas">${viewsCollapsed ? '▸' : '▾'}<span class="t">Vistas</span></button>${views.map(([icon, label], i) => `<button data-i="${i}" title="Vista ${label.toLowerCase()}">${icon}<span class="t">${label}</span></button>`).join('')}<hr>
     <button id="numbers" title="Mostrar ou ocultar os números do lazer">①<span class="t">${numbersVisible ? 'Ocultar números' : 'Mostrar números'}</span></button>
     <button id="fullscreen" title="Tela cheia">⛶<span class="t">Tela cheia</span></button>`;
   el.querySelectorAll<HTMLButtonElement>('[data-i]').forEach((b) => b.addEventListener('click', () => { touring = false; back(true); views[Number(b.dataset.i)][2](); }));
+  $('views-toggle').addEventListener('click', () => {
+    viewsCollapsed = !viewsCollapsed; el.classList.toggle('collapsed', viewsCollapsed);
+    $('views-toggle').firstChild!.textContent = viewsCollapsed ? '▸' : '▾';
+    try { localStorage.setItem('vistahub.views', viewsCollapsed ? 'closed' : 'open'); } catch { /* sem armazenamento */ }
+  });
   $('numbers').addEventListener('click', () => setNumbers(!numbersVisible));
   $('fullscreen').addEventListener('click', () => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen?.();
   });
   document.addEventListener('fullscreenchange', () => { $('fullscreen').innerHTML = document.fullscreenElement ? '⤢<span class="t">Sair da tela cheia</span>' : '⛶<span class="t">Tela cheia</span>'; });
+}
+
+let viewsCollapsed = (() => { try { return localStorage.getItem('vistahub.views') === 'closed'; } catch { return false; } })();
+
+/** Bússola: a agulha aponta para o norte real (-z no mapa) conforme a câmera gira; clique alinha o norte para cima. */
+function bindCompass() {
+  const needle = document.getElementById('compass-needle'); if (!needle) return;
+  const dir = new THREE.Vector3();
+  world.onTick(() => {
+    dir.subVectors(world.controls.target, world.camera.position);
+    const heading = Math.atan2(dir.x, -dir.z); // 0 = olhando para o norte
+    needle.style.transform = `rotate(${(-heading * 180) / Math.PI}deg)`;
+  });
+  $('compass').addEventListener('click', () => {
+    touring = false;
+    const target = world.controls.target.clone(); const offset = new THREE.Vector3().subVectors(world.camera.position, target);
+    const flat = Math.hypot(offset.x, offset.z);
+    void world.flyTo(target.clone().add(new THREE.Vector3(0, offset.y, flat)), target, 1.2);
+  });
 }
 
 /** Números dos marcadores de lazer na maquete: o visitante escolhe mostrar ou ocultar (lembrado neste navegador). */

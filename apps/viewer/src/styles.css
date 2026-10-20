@@ -177,3 +177,12 @@ button { font: inherit; cursor: pointer; }
 /* Números do lazer ocultos pelo botão da barra de vistas. */
 .label.hidden-num { display: none !important; }
 #views button.off { opacity: .55; }
+
+/* Bússola: gira com a câmera; clique vira o norte para cima. */
+.compass { width: 50px; height: 50px; padding: 5px; border: 0; display: grid; place-items: center; cursor: pointer; }
+.compass svg { overflow: visible; }
+#compass-needle { transform-origin: 20px 20px; transition: transform .08s linear; }
+
+/* Painel de vistas recolhível. */
+#views-toggle { font-weight: 600; justify-content: space-between; }
+.views.collapsed > :not(#views-toggle) { display: none !important; }

@@ -151,6 +151,31 @@ function neighborRaised(classes: Uint8Array, w: number, h: number, i: number) {
   return Ground.Paving;
 }
 
+/** Componentes de piso estreitos (largura média < maxWidth) e quase todos cercados de asfalto viram asfalto. */
+function absorbNarrowPaving(classes: Uint8Array, w: number, h: number, maxWidth: number, maxPixels: number) {
+  const seen = new Uint8Array(w * h); const stack: number[] = []; const pixels: number[] = [];
+  for (let start = 0; start < w * h; start++) {
+    const kind = classes[start];
+    if (seen[start] || (kind !== Ground.Paving && kind !== Ground.Other)) continue;
+    stack.push(start); seen[start] = 1; pixels.length = 0;
+    let minX = w, maxX = 0, minY = h, maxY = 0, asphalt = 0, border = 0;
+    while (stack.length) {
+      const i = stack.pop()!; pixels.push(i); const x = i % w; const y = (i - x) / w;
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
+        if (j < 0 || j >= w * h) continue;
+        if (classes[j] === kind) { if (!seen[j]) { seen[j] = 1; stack.push(j); } }
+        else if (classes[j] !== Ground.Outside) { border++; if (classes[j] === Ground.Asphalt) asphalt++; }
+      }
+    }
+    const length = Math.max(maxX - minX + 1, maxY - minY + 1); const ratio = asphalt / Math.max(1, border);
+    // Estreita e encostada no asfalto, ou mancha média quase toda cercada por asfalto.
+    const narrow = pixels.length <= maxPixels && pixels.length / length < maxWidth && ratio > 0.5;
+    const enclosed = pixels.length <= maxPixels / 2 && ratio > 0.65;
+    if (narrow || enclosed) for (const i of pixels) classes[i] = Ground.Asphalt;
+  }
+}
+
 /** Áreas de piso com densidade de faixas laranja/amarelas (demarcação de vagas) viram asfalto. */
 function absorbParkingPads(classes: Uint8Array, art: Uint8Array, w: number, h: number, minPixels: number) {
   const seen = new Uint8Array(w * h); const stack: number[] = []; const pixels: number[] = [];
@@ -235,6 +260,10 @@ export function classifyGround(canvas: HTMLCanvasElement, lot: Point[], metersPe
   straightenEdges(classes, w, h, Math.round(2.2 / metersPerPixel));
   for (let i = 0; i < w * h; i++) if (isStall[i]) classes[i] = Ground.Asphalt;
   removeSpecks(classes, w, h, minPixels, maxIsland);
+
+  // Canteiros/faixas estreitas de piso no meio do estacionamento viram asfalto (fileiras limpas de vagas).
+  absorbNarrowPaving(classes, w, h, 5 / metersPerPixel, Math.round(600 / m2));
+  for (let i = 0; i < w * h; i++) if (isStall[i]) classes[i] = Ground.Asphalt;
 
   // Faixas pintadas: traços claros ou amarelos que a suavização absorveu no asfalto.
   const marks = new Uint8Array(w * h);
