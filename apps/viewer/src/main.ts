@@ -28,6 +28,7 @@ let floorLabel: { element: HTMLElement; remove: () => void } | null = null;
 /** Rótulos com o número de cada apartamento do andar escolhido. */
 let unitLabels: { unitId: string; element: HTMLElement; remove: () => void }[] = [];
 let touring = false;
+let hover: { clear: () => void } | null = null;
 
 const available = (units: Unit[]) => units.filter((u) => u.status === 'AVAILABLE').length;
 const planOf = (unit: Unit): FloorPlan | undefined => dev.floorPlans.find((p) => p.id === unit.floorPlanId);
@@ -54,7 +55,7 @@ async function start() {
   renderChrome();
   createLabels();
   bindPicking();
-  bindTowerHover(world, site.towers, () => state.tower);
+  hover = bindTowerHover(world, site.towers, () => state.tower);
   bindCompass();
   if (import.meta.env.DEV) Object.assign(window, { __vista: { world, site } }); // inspeção no navegador durante o desenvolvimento
   overview(0.01);
@@ -221,6 +222,7 @@ function overview(duration = 1.8) {
 }
 
 function selectTower(tower: TowerObject) {
+  hover?.clear();
   if (state.tower && state.tower !== tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); state.tower.setHover(false); }
   tower.setHover(true); // a torre escolhida fica marcada
   state.tower = tower; state.floor = null; state.unit = null;
@@ -299,12 +301,17 @@ function previewFloor(floor: number | null) {
   floorLabel = { element, remove: world.addLabel(element, position) };
 }
 
-function clearUnitLabels() { for (const label of unitLabels) label.remove(); unitLabels = []; }
+function clearUnitLabels() {
+  for (const label of unitLabels) label.remove(); unitLabels = [];
+  towerLabels.forEach((label) => label.classList.remove('hidden'));
+}
 
 /** Número de cada apartamento flutuando sobre o seu volume, na cor do status (o escolhido em destaque). */
 function renderUnitLabels() {
   clearUnitLabels();
   const tower = state.tower; if (!tower || state.floor == null) return;
+  // O nome da torre ficaria em cima dos números do andar cortado.
+  towerLabels.get(tower.building.id)?.classList.add('hidden');
   for (const unit of tower.building.units.filter((u) => u.floor === state.floor)) {
     const position = tower.unitTop(unit.id); if (!position) continue;
     const element = document.createElement('button');

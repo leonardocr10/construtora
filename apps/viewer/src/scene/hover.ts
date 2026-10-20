@@ -32,4 +32,6 @@ export function bindTowerHover(world: World, towers: TowerObject[], selected: ()
   canvas.addEventListener('pointermove', (e) => { last = e; if (!frame) frame = requestAnimationFrame(update); });
   canvas.addEventListener('pointerleave', () => { last = null; set(null); });
   canvas.addEventListener('pointerdown', () => set(null));
+  /** Limpa o realce (ex.: torre escolhida pela barra, sem passar o mouse). */
+  return { clear: () => set(null) };
 }
