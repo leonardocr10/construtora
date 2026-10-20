@@ -5,17 +5,20 @@
 //   npm run db:init -- --admin "Construtora X" construtora-x "Nome Admin" admin@x.com "senha-com-12+"
 import 'dotenv/config';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const schema = join(root, 'prisma', 'schema.prisma');
 
-function run(label, command, args) {
+function run(label, command, args, { optional = false } = {}) {
   console.log(`\n> ${label}`);
   // npx é um .cmd no Windows e precisa de shell; nesse caso o comando vai como string única.
   const result = Array.isArray(args) ? spawnSync(command, args, { cwd: root, stdio: 'inherit' }) : spawnSync(`${command} ${args}`, { cwd: root, stdio: 'inherit', shell: true });
-  if (result.status !== 0) { console.error(`Falha em: ${label}`); process.exit(result.status ?? 1); }
+  if (result.status === 0) return true;
+  if (optional) return false;
+  console.error(`Falha em: ${label}`); process.exit(result.status ?? 1);
 }
 
 if (!process.env.DATABASE_URL) { console.error('DATABASE_URL não definida. Copie .env.example para .env e ajuste a conexão.'); process.exit(1); }
@@ -24,7 +27,13 @@ console.log(`Banco alvo: ${target.hostname}:${target.port || 3306}${target.pathn
 
 // migrate deploy cria o banco se ele não existir e aplica apenas migrations pendentes (seguro em produção).
 run('Aplicando migrations', 'npx', `prisma migrate deploy --schema "${schema}"`);
-run('Gerando Prisma Client', 'npx', `prisma generate --schema "${schema}"`);
+// No Windows o engine do Prisma fica travado enquanto a API (ou outro processo Node) está rodando.
+// Se o client já existe, seguimos com ele e avisamos; o banco já foi migrado acima.
+if (!run('Gerando Prisma Client', 'npx', `prisma generate --schema "${schema}"`, { optional: true })) {
+  const engine = join(root, 'node_modules', '.prisma', 'client', 'index.js');
+  if (!existsSync(engine)) { console.error('Falha em: Gerando Prisma Client (feche a API e outros processos Node e rode novamente)'); process.exit(1); }
+  console.warn('Aviso: Prisma Client não foi regenerado porque o arquivo está em uso (API rodando?). Pare a API e rode "npm run prisma:generate" antes de reiniciá-la.');
+}
 
 const { PrismaClient, SubscriptionPlan } = await import('@prisma/client');
 const prisma = new PrismaClient();
