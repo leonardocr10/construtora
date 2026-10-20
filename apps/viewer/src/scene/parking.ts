@@ -41,7 +41,8 @@ export function planParking(detected: DetectedCar[], map: GroundMap, art: ImageD
     const k = cls(x, y); if (k === Asphalt) return true; if (k !== Paving) return false;
     const i = (Math.round(y) * width + Math.round(x)) * 4; const r = data[i], g = data[i + 1], b = data[i + 2];
     const lum = 0.3 * r + 0.59 * g + 0.11 * b;
-    return lum > 150 && lum < 220 && r - b >= 18;
+    // Fundo de vaga: bege acinzentado (r − g pequeno). Deque e piso de lazer são rosados/terracota (r − g ≥ 18).
+    return lum > 150 && lum < 220 && r - b >= 18 && r - g < 18;
   };
   if (!detected.length) return { stalls: [] as Stall[] };
 

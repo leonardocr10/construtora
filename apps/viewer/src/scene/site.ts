@@ -5,6 +5,7 @@ import { buildTower, type TowerObject } from './tower';
 import { buildCars, detectCars, lotBase } from './lot-relief';
 import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, paintGround, settleStalls, type Footprint, type GroundMap } from './ground';
 import { buildAmenities } from './amenities';
+import { buildVectorGround } from './ground-vector';
 import { planParking } from './parking';
 import { buildPalms, buildTrees } from './trees';
 import { box, compose, merge, meshFrom, pbr, polygon, prism, shadows, transform, type Geo } from './geometry';
@@ -170,7 +171,7 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
           x: b.position!.x / layout.metersPerPixel + layout.origin[0], y: b.position!.z / layout.metersPerPixel + layout.origin[1],
           width: b.model3d?.width ?? 30, depth: b.model3d?.depth ?? 16, angle: ((b.position!.rotation ?? 0) * Math.PI) / 180,
         }));
-        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, [], erased, towerFootprints);
+        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, [], erased, towerFootprints, original);
         // Fileiras de vagas encostadas no meio-fio, completas, e ocupadas conforme a arte.
         const parking = planParking(detected, ground, original, layout.metersPerPixel);
         settleStalls(ground, parking.stalls, layout.metersPerPixel);
@@ -200,20 +201,27 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
             1: library.material('lot-asphalt', 'asphalt'), 2: library.material('lot-grass', 'grass'), 3: library.material('lot-paving', 'paving'),
           };
           const other = pbr(scene, 'lot-other', { color: 0xffffff, roughness: 0.95 }); other.albedoTexture = art;
-          const setOf: Record<number, string> = { 1: 'asphalt', 2: 'grass', 3: 'paving' };
           const tiled = (geo: Geo, meters: number) => ({ ...geo, uvs: geo.uvs.map((v) => v / meters) });
-          for (const [kind, geo] of meshes.tops) shadows(meshFrom(`lot-${kind}`, setOf[kind] ? tiled(geo, library.tileMeters(setOf[kind])) : geo, scene, materials[kind] ?? other, group), false).freezeWorldMatrix();
+          // Asfalto: o polígono do lote inteiro. Por cima, o chão elevado em contornos vetoriais suavizados.
+          const base = polygon(lot, asphaltLevel);
+          shadows(meshFrom('lot-asphalt', tiled(base, library.tileMeters('asphalt')), scene, materials[1], group), false).freezeWorldMatrix();
+          const vector = buildVectorGround(ground, (p) => pixelToSite(layout, p));
+          const top = (name: string, geo: Geo | null, material: PBRMaterial, set?: string) => {
+            if (!geo) return;
+            shadows(meshFrom(name, set ? tiled(geo, library.tileMeters(set)) : { ...geo, uvs: artUv(geo, ground, layout) }, scene, material, group), false).freezeWorldMatrix();
+          };
+          top('lot-paving', vector.raised, materials[3], 'paving');
+          top('lot-grass', vector.grass, materials[2], 'grass');
+          top('lot-other', vector.other, other);
           const marks = new DynamicTexture('lot-marks', paintGround(canvas, ground, layout.metersPerPixel, parking.stalls, true).canvas, scene, true);
           marks.hasAlpha = true; marks.anisotropicFilteringLevel = 16; marks.update(true);
           const markMaterial = pbr(scene, 'lot-marks', { color: 0xffffff, roughness: 0.7 });
           markMaterial.albedoTexture = marks; markMaterial.useAlphaFromAlbedoTexture = true;
           markMaterial.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHATEST; markMaterial.alphaCutOff = 0.4;
           markMaterial.zOffset = -2; // fica por cima do asfalto sem levantar a malha
-          if (meshes.tops.has(1)) {
-            const overlay = meshFrom('lot-marks', { ...meshes.tops.get(1)!, uvs: artUv(meshes.tops.get(1)!, ground, layout) }, scene, markMaterial, group);
-            shadows(overlay, false).isPickable = false;
-          }
-          shadows(meshFrom('lot-curbs', tiled(meshes.side, library.tileMeters('concrete')), scene, library.material('curb', 'concrete'), group), false);
+          shadows(meshFrom('lot-marks', { ...base, uvs: artUv(base, ground, layout) }, scene, markMaterial, group), false).isPickable = false;
+          const curb = library.material('curb', 'concrete'); curb.backFaceCulling = false;
+          shadows(meshFrom('lot-curbs', tiled(vector.curbs, library.tileMeters('concrete')), scene, curb, group), false);
           const tasks: Promise<unknown>[] = [];
           const carModels = ['car_hatch', 'car_sedan', 'car_suv'];
           const jitter = (seed: number, k: number) => { const t = Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453; return t - Math.floor(t) - 0.5; };
