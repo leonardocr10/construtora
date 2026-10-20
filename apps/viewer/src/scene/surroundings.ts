@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Point, Surroundings } from '../types';
-import { asphaltTile, pavingTile } from './ground';
+import { asphaltTile, grassTile, pavingTile } from './ground';
+import { crownGeometry } from './trees';
 
 const roadWidth: Record<string, number> = {
   motorway: 22, trunk: 20, primary: 16, secondary: 13, tertiary: 11, unclassified: 8, residential: 8, living_street: 6,
@@ -47,6 +48,7 @@ export function flatPolygon(points: Point[], y: number) {
   const triangles = THREE.ShapeUtils.triangulateShape(contour, []);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(contour.flatMap((v) => [v.x, y, v.y]), 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(contour.flatMap((v) => [v.x, v.y]), 2));
   geometry.setIndex(triangles.flat().reverse());
   geometry.computeVertexNormals();
   return geometry;
@@ -110,7 +112,7 @@ export function buildSurroundings(data: Surroundings, exclusion: Point[]): Surro
   group.add(ground);
 
   const greens = data.green.filter((g) => g.points.length > 3).map((g) => flatPolygon(g.points, 0.02));
-  if (greens.length) { const mesh = new THREE.Mesh(mergeGeometries(greens), new THREE.MeshLambertMaterial({ color: 0x86a95f, side: THREE.DoubleSide })); mesh.receiveShadow = true; group.add(mesh); }
+  if (greens.length) { const mesh = new THREE.Mesh(mergeGeometries(greens), new THREE.MeshLambertMaterial({ map: tiled(grassTile(512), 8), side: THREE.DoubleSide })); mesh.receiveShadow = true; group.add(mesh); }
   const water = data.water.filter((g) => g.points.length > 3).map((g) => flatPolygon(g.points, 0.05));
   if (water.length) group.add(new THREE.Mesh(mergeGeometries(water), new THREE.MeshPhongMaterial({ color: 0x5b9bc7, shininess: 80, side: THREE.DoubleSide })));
 
@@ -219,7 +221,7 @@ export function buildSurroundings(data: Surroundings, exclusion: Point[]): Surro
     }
   }
   if (trees.length) {
-    const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: 0x4f8a3a, flatShading: true }), trees.length);
+    const crowns = new THREE.InstancedMesh(crownGeometry(), new THREE.MeshLambertMaterial({ color: 0x5b9a45, vertexColors: true, flatShading: true }), trees.length);
     trees.forEach((m, i) => crowns.setMatrixAt(i, m));
     crowns.castShadow = true;
     group.add(crowns);

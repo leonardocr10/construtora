@@ -4,70 +4,6 @@ import type { Building, TowerModel, Unit, UnitSlot, UnitStatus } from '../types'
 export const statusColor: Record<UnitStatus, number> = { AVAILABLE: 0x22a565, RESERVED: 0xf2a33a, SOLD: 0x9a95a6, BLOCKED: 0x6b6f78, UNAVAILABLE: 0x6b6f78 };
 const defaultSlots: UnitSlot[] = Array.from({ length: 8 }, (_, i) => ({ final: String(i + 1).padStart(2, '0'), side: i < 4 ? 'back' : 'front', column: i % 4 }));
 
-/**
- * Textura de fachada (um pavimento, repetida na vertical): reboco com leve variação, faixa da laje,
- * janelas com caixilho, montante central, vidro com reflexo do céu e sombra do peitoril.
- * As proporções das janelas casam com litTexture (janelas acesas ao entardecer).
- */
-function facadeTexture(base: string, columns: number) {
-  const W = 512; const H = 128; const k = H / 64;
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d')!;
-  const cell = W / columns;
-  // Painéis em dois tons alternados por apartamento, como nas fachadas de vendas.
-  const alt = new THREE.Color(base).offsetHSL(0.03, 0.06, -0.11).getStyle();
-  for (let c = 0; c < columns; c++) { ctx.fillStyle = c % 2 ? alt : base; ctx.fillRect(c * cell, 0, cell, H); }
-  for (let i = 0; i < 900; i++) { ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.025})`; ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2); }
-  // Junta entre painéis e laje entre pavimentos.
-  ctx.fillStyle = 'rgba(0,0,0,0.10)'; for (let c = 1; c < columns; c++) ctx.fillRect(c * cell - 1, 0, 2, H);
-  ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.fillRect(0, H - 7, W, 4);
-  ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(0, H - 3, W, 3);
-  const drawWindow = (wx: number, wy: number, ww: number, wh: number, mullion: boolean) => {
-    ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(wx - 2, wy - 2, ww + 6, wh + 6); // sombra do recuo
-    ctx.fillStyle = '#4f565e'; ctx.fillRect(wx - 3, wy - 3, ww + 6, wh + 6); // caixilho
-    const glass = ctx.createLinearGradient(0, wy, 0, wy + wh);
-    glass.addColorStop(0, '#5f7687'); glass.addColorStop(0.35, '#2e3c48'); glass.addColorStop(1, '#151c23');
-    ctx.fillStyle = glass; ctx.fillRect(wx, wy, ww, wh);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.moveTo(wx, wy + wh * 0.5); ctx.lineTo(wx + ww * 0.4, wy); ctx.lineTo(wx + ww * 0.55, wy); ctx.lineTo(wx, wy + wh * 0.8); ctx.fill();
-    if (mullion) { ctx.fillStyle = '#4f565e'; ctx.fillRect(wx + ww / 2 - 1.5, wy, 3, wh); ctx.fillRect(wx, wy + wh * 0.3, ww, 2); }
-    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(wx - 4, wy + wh + 3, ww + 8, 3); // peitoril
-  };
-  for (let c = 0; c < columns; c++) {
-    for (const [x, w] of [[0.16, 0.22], [0.58, 0.26]] as const) drawWindow(c * cell + x * cell, 20 * k, w * cell, 26 * k, true);
-    drawWindow(c * cell + 0.45 * cell, 21 * k, 0.07 * cell, 8 * k, false); // janela do banheiro
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.anisotropy = 8;
-  return texture;
-}
-
-/** Janelas acesas ao entardecer: mapa emissivo da altura inteira, sorteando quais janelas têm luz. */
-function litTexture(columns: number, floors: number, seed: number) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256; canvas.height = 64 * floors;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  let state = seed;
-  const random = () => { state = (state * 16807) % 2147483647; return state / 2147483647; };
-  const cell = 256 / columns;
-  for (let f = 0; f < floors; f++) {
-    const y = (floors - 1 - f) * 64;
-    for (let col = 0; col < columns; col++) {
-      for (const [x, w] of [[0.16, 0.22], [0.58, 0.26]] as const) {
-        if (random() > 0.42) continue;
-        ctx.fillStyle = random() < 0.7 ? '#ffc76b' : '#ffe3a8';
-        ctx.fillRect(col * cell + x * cell, y + 20, w * cell, 26);
-      }
-    }
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
 export interface TowerObject {
   building: Building; group: THREE.Group; top: THREE.Vector3; center: THREE.Vector3; height: number;
   unitMeshes: Map<string, THREE.Mesh>; floorBands: THREE.Mesh[];
@@ -101,92 +37,110 @@ export function buildTower(building: Building): TowerObject {
   group.rotation.y = -THREE.MathUtils.degToRad(pos.rotation ?? 0);
 
   // Corpo: duas lâminas separadas pelo núcleo central (como no material de vendas).
+  // Fachada toda em geometria (sem textura pintada): painéis por apartamento, janelas com caixilho,
+  // vidro e peitoril, frisos de laje e patamares da escada no núcleo. Fica nítida de perto.
   const coreW = Math.min(4.2, W * 0.12);
   const wingW = (W - coreW) / 2;
-  const side = facadeTexture(colors.facade, columns / 2); side.repeat.set(1, floors);
-  const end = facadeTexture(colors.facade, 2); end.repeat.set(1, floors);
+  const facadeColor = new THREE.Color(colors.facade);
+  const wall = new THREE.MeshStandardMaterial({ color: facadeColor, roughness: 0.88 });
   const plain = new THREE.MeshStandardMaterial({ color: colors.roof, roughness: 0.95 });
-  const seed = [...building.id].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 2147483647, 7) || 7;
-  const litSide = litTexture(columns / 2, floors, seed); const litEnd = litTexture(2, floors, seed + 13);
-  const facade = (map: THREE.Texture, lit: THREE.Texture) => new THREE.MeshStandardMaterial({ map, roughness: 0.82, metalness: 0, emissive: 0xffffff, emissiveMap: lit, emissiveIntensity: 0 });
-  const nightMaterials: THREE.MeshStandardMaterial[] = [];
-  const wingMaterials = [facade(end, litEnd), facade(end, litEnd), plain, plain, facade(side, litSide), facade(side, litSide)];
-  nightMaterials.push(...(wingMaterials.filter((m) => m !== plain) as THREE.MeshStandardMaterial[]));
+  const panelMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
+  const trim = new THREE.MeshStandardMaterial({ color: facadeColor.clone().offsetHSL(0, 0, 0.05), roughness: 0.8 });
+  const frameMaterial = new THREE.MeshStandardMaterial({ color: 0x5a6168, roughness: 0.5, metalness: 0.2 });
+  const glassMaterial = new THREE.MeshStandardMaterial({ color: 0x3a4b59, roughness: 0.18, metalness: 0.25 });
+  const litMaterial = new THREE.MeshStandardMaterial({ color: 0x3a4b59, roughness: 0.18, metalness: 0.25, emissive: 0xffc56a, emissiveIntensity: 0 });
+  const accent = new THREE.MeshStandardMaterial({ color: colors.accent, roughness: 0.75 });
+  const railMaterial = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.5, metalness: 0.5 });
+  const nightMaterials = [litMaterial];
   for (const dir of [-1, 1]) {
-    const wing = new THREE.Mesh(new THREE.BoxGeometry(wingW, H, D), wingMaterials);
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(wingW, H, D), [wall, wall, plain, plain, wall, wall]);
     wing.position.set(dir * (coreW / 2 + wingW / 2), H / 2, 0);
     wing.castShadow = wing.receiveShadow = true;
     group.add(wing);
-    const parapet = new THREE.Mesh(new THREE.BoxGeometry(wingW + 0.3, 1.1, D + 0.3), plain);
+    const parapet = new THREE.Mesh(new THREE.BoxGeometry(wingW + 0.3, 1.1, D + 0.3), trim);
     parapet.position.set(wing.position.x, H + 0.55, 0); parapet.castShadow = true;
     group.add(parapet);
   }
-  const accent = new THREE.MeshStandardMaterial({ color: colors.accent, roughness: 0.75 });
   const core = new THREE.Mesh(new THREE.BoxGeometry(coreW, H + 3.2, D * 0.62), accent);
   core.position.set(0, (H + 3.2) / 2, 0); core.castShadow = true;
   group.add(core);
 
-  // Varandas gourmet: lajes na cor de destaque nas extremidades de cada pavimento.
-  const balconies = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), accent, floors * 4);
-  const dummy = new THREE.Object3D(); let b = 0;
-  for (let f = 1; f < floors; f++) {
-    for (const dir of [-1, 1]) for (const zDir of [-1, 1]) {
-      dummy.position.set(dir * (W / 2 - 3.2), f * h + 0.15, zDir * (D / 2 + 0.7)); dummy.scale.set(5.2, 0.3, 1.4); dummy.updateMatrix();
-      balconies.setMatrixAt(b++, dummy.matrix);
-    }
-  }
-  balconies.count = b; balconies.castShadow = true;
-  group.add(balconies);
-  // Guarda-corpo de vidro das varandas.
-  const railMaterial = new THREE.MeshStandardMaterial({ color: 0xbfd6e2, transparent: true, opacity: 0.45, roughness: 0.1, metalness: 0.1, depthWrite: false });
-  const rails = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), railMaterial, floors * 4);
-  let r = 0;
-  for (let f = 1; f < floors; f++) {
-    for (const dir of [-1, 1]) for (const zDir of [-1, 1]) {
-      dummy.position.set(dir * (W / 2 - 3.2), f * h + 0.85, zDir * (D / 2 + 1.38)); dummy.scale.set(5.2, 1.1, 0.06); dummy.updateMatrix();
-      rails.setMatrixAt(r++, dummy.matrix);
-    }
-  }
-  rails.count = r;
-  group.add(rails);
-  // Relevo da fachada: frisos de laje em volta das lâminas, pilastras entre apartamentos e platibanda.
-  const trim = new THREE.MeshStandardMaterial({ color: new THREE.Color(colors.facade).offsetHSL(0, 0, 0.04), roughness: 0.85 });
-  const pilasterMaterial = new THREE.MeshStandardMaterial({ color: new THREE.Color(colors.facade).offsetHSL(0.02, 0.03, -0.12), roughness: 0.9 });
+  // Peças instanciadas: cada lista vira um InstancedMesh de caixas unitárias.
+  const dummy = new THREE.Object3D();
+  const lists = { panels: [] as THREE.Matrix4[], frames: [] as THREE.Matrix4[], glass: [] as THREE.Matrix4[], lit: [] as THREE.Matrix4[], sills: [] as THREE.Matrix4[], slabs: [] as THREE.Matrix4[], landings: [] as THREE.Matrix4[], rails: [] as THREE.Matrix4[], voids: [] as THREE.Matrix4[] };
+  const panelColors: THREE.Color[] = [];
+  /** Caixa numa face: (u, y) no plano da face, `out` metros para fora; normal no eixo x (nx) ou z (nz). */
+  const onFace = (list: THREE.Matrix4[], fx: number, fz: number, nx: number, nz: number, u: number, y: number, out: number, sw: number, sh: number, sd: number) => {
+    dummy.position.set(fx + (nz ? u : 0) + nx * out, y, fz + (nx ? u : 0) + nz * out);
+    dummy.rotation.set(0, nx ? Math.PI / 2 : 0, 0); dummy.scale.set(sw, sh, sd); dummy.updateMatrix();
+    list.push(dummy.matrix.clone());
+  };
+  const box = (list: THREE.Matrix4[], x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    dummy.position.set(x, y, z); dummy.rotation.set(0, 0, 0); dummy.scale.set(sx, sy, sz); dummy.updateMatrix(); list.push(dummy.matrix.clone());
+  };
+  let seed = [...building.id].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 2147483647, 7) || 7;
+  const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  // Segundo tom dos painéis: puxado para um verde-acinzentado, como nas fachadas de vendas.
+  const alt = facadeColor.clone().lerp(new THREE.Color(0x9cb8b0), 0.38);
   const cellsPerWing = Math.max(1, columns / 2);
-  const slabs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), trim, floors * 8);
-  const pilasters = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), pilasterMaterial, (cellsPerWing + 1) * 4 + 8);
-  let s = 0; let p = 0;
-  const box = (mesh: THREE.InstancedMesh, index: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
-    dummy.position.set(x, y, z); dummy.scale.set(sx, sy, sz); dummy.updateMatrix(); mesh.setMatrixAt(index, dummy.matrix);
+  /** Uma face da lâmina: painéis alternados por apartamento e, por pavimento, duas janelas e a do banheiro. */
+  const face = (fx: number, fz: number, nx: number, nz: number, length: number, cells: number) => {
+    const cw = length / cells;
+    for (let c = 0; c < cells; c++) {
+      const u = -length / 2 + cw * (c + 0.5);
+      onFace(lists.panels, fx, fz, nx, nz, u, H / 2, 0.03, cw - 0.08, H, 0.06);
+      panelColors.push(c % 2 ? alt : facadeColor);
+      const big = Math.min(1.4, cw * 0.27);
+      for (let f = 0; f < floors; f++) {
+        const base = f * h;
+        for (const k of [0.27, 0.73]) {
+          const wu = u - cw / 2 + cw * k; const wy = base + 0.95 + 0.7;
+          onFace(lists.frames, fx, fz, nx, nz, wu, wy, 0.08, big + 0.14, 1.54, 0.08);
+          onFace(random() < 0.42 ? lists.lit : lists.glass, fx, fz, nx, nz, wu, wy, 0.12, big, 1.4, 0.02);
+          onFace(lists.frames, fx, fz, nx, nz, wu, wy, 0.13, 0.05, 1.4, 0.03); // montante
+          onFace(lists.sills, fx, fz, nx, nz, wu, base + 0.92, 0.14, big + 0.26, 0.06, 0.16);
+        }
+        onFace(lists.frames, fx, fz, nx, nz, u, base + 1.95, 0.08, 0.52, 0.52, 0.08); // janela do banheiro
+        onFace(lists.glass, fx, fz, nx, nz, u, base + 1.95, 0.12, 0.42, 0.42, 0.02);
+      }
+    }
   };
   for (const dir of [-1, 1]) {
     const cx = dir * (coreW / 2 + wingW / 2);
+    face(cx, D / 2, 0, 1, wingW, cellsPerWing);
+    face(cx, -D / 2, 0, -1, wingW, cellsPerWing);
+    face(cx + dir * (wingW / 2), 0, dir, 0, D, 2);
+    // Frisos de laje em volta da lâmina, a cada pavimento.
     for (let f = 1; f <= floors; f++) {
       const y = f * h - 0.08;
-      box(slabs, s++, cx, y, D / 2 + 0.07, wingW + 0.28, 0.2, 0.14); box(slabs, s++, cx, y, -D / 2 - 0.07, wingW + 0.28, 0.2, 0.14);
-      box(slabs, s++, cx - dir * (wingW / 2 + 0.07), y, 0, 0.14, 0.2, D + 0.28); box(slabs, s++, cx + dir * (wingW / 2 + 0.07), y, 0, 0.14, 0.2, D + 0.28);
+      box(lists.slabs, cx, y, D / 2 + 0.1, wingW + 0.34, 0.2, 0.2); box(lists.slabs, cx, y, -D / 2 - 0.1, wingW + 0.34, 0.2, 0.2);
+      box(lists.slabs, cx + dir * (wingW / 2 + 0.1), y, 0, 0.2, 0.2, D + 0.34);
     }
-    for (let j = 0; j <= cellsPerWing; j++) {
-      const x = cx - wingW / 2 + (wingW / cellsPerWing) * j;
-      for (const zDir of [-1, 1]) box(pilasters, p++, x, H / 2, zDir * (D / 2 + 0.06), 0.32, H, 0.16);
-    }
-    for (const xEnd of [-1, 1]) box(pilasters, p++, cx + xEnd * (wingW / 2 + 0.05), H / 2, 0, 0.14, H, D * 0.3);
   }
-  slabs.count = s; pilasters.count = p;
-  slabs.castShadow = pilasters.castShadow = true; slabs.receiveShadow = pilasters.receiveShadow = true;
-  group.add(slabs, pilasters);
-  // Núcleo de circulação: aberturas da escada por pavimento, com guarda-corpo, nas duas faces.
-  const voids = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: new THREE.Color(colors.accent).multiplyScalar(0.35), roughness: 1 }), floors * 2);
-  const coreRails = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.6, metalness: 0.4 }), floors * 4);
-  let v = 0; let cr = 0;
-  for (let f = 0; f < floors; f++) for (const zDir of [-1, 1]) {
-    const z = zDir * (D * 0.31 + 0.01);
-    box(voids, v++, 0, f * h + h * 0.62, z, coreW * 0.7, h * 0.5, 0.04);
-    box(coreRails, cr++, 0, f * h + h * 0.45, z + zDir * 0.05, coreW * 0.74, 0.05, 0.05);
-    box(coreRails, cr++, 0, f * h + h * 0.62, z + zDir * 0.05, coreW * 0.74, 0.04, 0.04);
+  // Núcleo: patamar da escada por pavimento, com guarda-corpo de montantes, nas duas faces.
+  const posts = Math.max(3, Math.round(coreW / 0.9));
+  for (let f = 1; f < floors; f++) for (const zDir of [-1, 1]) {
+    const z = zDir * (D * 0.31); const y = f * h;
+    box(lists.voids, 0, y + h * 0.5, z + zDir * 0.01, coreW * 0.82, h * 0.72, 0.02);
+    box(lists.landings, 0, y + 0.08, z + zDir * 0.55, coreW + 0.3, 0.16, 1.1);
+    box(lists.rails, 0, y + 1.05, z + zDir * 1.08, coreW + 0.3, 0.05, 0.05);
+    box(lists.rails, 0, y + 0.6, z + zDir * 1.08, coreW + 0.3, 0.03, 0.03);
+    for (let k = 0; k <= posts; k++) box(lists.rails, -coreW / 2 - 0.15 + ((coreW + 0.3) / posts) * k, y + 0.6, z + zDir * 1.08, 0.04, 0.9, 0.04);
   }
-  voids.count = v; coreRails.count = cr;
-  group.add(voids, coreRails);
+  const unitBox = new THREE.BoxGeometry(1, 1, 1);
+  const instanced = (list: THREE.Matrix4[], material: THREE.Material, shadow = true) => {
+    if (!list.length) return null;
+    const mesh = new THREE.InstancedMesh(unitBox, material, list.length);
+    list.forEach((m, i) => mesh.setMatrixAt(i, m));
+    mesh.castShadow = shadow; mesh.receiveShadow = true;
+    group.add(mesh);
+    return mesh;
+  };
+  const panels = instanced(lists.panels, panelMaterial)!;
+  panelColors.forEach((color, i) => panels.setColorAt(i, color));
+  instanced(lists.frames, frameMaterial, false); instanced(lists.glass, glassMaterial, false); instanced(lists.lit, litMaterial, false);
+  instanced(lists.sills, trim, false); instanced(lists.slabs, trim); instanced(lists.landings, accent); instanced(lists.rails, railMaterial, false);
+  instanced(lists.voids, new THREE.MeshStandardMaterial({ color: new THREE.Color(colors.accent).multiplyScalar(0.3), roughness: 1 }), false);
   // Casa de máquinas e caixa d'água sobre a cobertura.
   const machine = new THREE.Mesh(new THREE.BoxGeometry(Math.min(7, W * 0.2), 2.4, D * 0.36), plain);
   machine.position.set(-(coreW / 2 + wingW / 2), H + 2.3, 0); machine.castShadow = true;
@@ -222,11 +176,9 @@ export function buildTower(building: Building): TowerObject {
   });
 
   // Corpo recortado: mostra só os pavimentos abaixo do andar selecionado.
-  const cutSide = side.clone(); const cutEnd = end.clone();
-  const cutMaterials = [new THREE.MeshStandardMaterial({ map: cutEnd, roughness: 0.82 }), new THREE.MeshStandardMaterial({ map: cutEnd, roughness: 0.82 }), plain, plain, new THREE.MeshStandardMaterial({ map: cutSide, roughness: 0.82 }), new THREE.MeshStandardMaterial({ map: cutSide, roughness: 0.82 })];
   const cutBody = new THREE.Group(); cutBody.visible = false;
   for (const dir of [-1, 1]) {
-    const wing = new THREE.Mesh(new THREE.BoxGeometry(wingW, 1, D).translate(0, 0.5, 0), cutMaterials);
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(wingW, 1, D).translate(0, 0.5, 0), [wall, wall, plain, plain, wall, wall]);
     wing.position.x = dir * (coreW / 2 + wingW / 2); wing.castShadow = wing.receiveShadow = true;
     cutBody.add(wing);
   }
@@ -247,7 +199,7 @@ export function buildTower(building: Building): TowerObject {
   // Materiais do corpo que recebem o realce de hover (cor original guardada para voltar).
   const hoverTint = new THREE.Color(0xff8a3d);
   const tintable = new Map<THREE.MeshStandardMaterial, THREE.Color>();
-  for (const material of [...wingMaterials, ...cutMaterials, trim, pilasterMaterial, accent] as THREE.MeshStandardMaterial[]) if (!tintable.has(material)) tintable.set(material, material.color.clone());
+  for (const material of [wall, plain, panelMaterial, trim, accent]) tintable.set(material, material.color.clone());
 
   return {
     building, group, top, center, height: H, unitMeshes, floorBands, pickables: [hit, ...unitMeshes.values()],
@@ -261,11 +213,10 @@ export function buildTower(building: Building): TowerObject {
       cutBody.visible = cut && floor! > 0;
       if (cut && floor! > 0) {
         for (const child of cutBody.children) child.scale.y = floor! * h;
-        cutSide.repeat.set(1, floor!); cutEnd.repeat.set(1, floor!);
       }
       this.setSelectedUnit(selected);
     },
-    setDusk(t) { for (const material of nightMaterials) material.emissiveIntensity = t * 1.15; },
+    setDusk(t) { for (const material of nightMaterials) material.emissiveIntensity = t * 1.6; },
     setHover(on) {
       for (const [material, base] of tintable) material.color.copy(base).lerp(hoverTint, on ? 0.38 : 0);
     },

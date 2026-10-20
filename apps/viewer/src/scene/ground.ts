@@ -265,13 +265,23 @@ export const asphaltTile = (size: number) => tile(size, (ctx, s) => {
   }
 });
 
-const grassTile = (size: number) => tile(size, (ctx, s) => {
-  ctx.fillStyle = '#6f9a45'; ctx.fillRect(0, 0, s, s);
-  for (let i = 0; i < 10; i++) {
-    const g = ctx.createRadialGradient(rand() * s, rand() * s, 0, rand() * s, rand() * s, s * (0.2 + rand() * 0.3));
-    g.addColorStop(0, rand() < 0.5 ? 'rgba(140,175,80,0.35)' : 'rgba(60,100,40,0.3)'); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
+/** Grama sem emenda: manchas suaves de tom (repetidas nas bordas) e milhares de folhas curtas em vários verdes. */
+export const grassTile = (size: number) => tile(size, (ctx, s) => {
+  ctx.fillStyle = '#73a047'; ctx.fillRect(0, 0, s, s);
+  const wrapped = (draw: (ox: number, oy: number) => void) => { for (const ox of [-s, 0, s]) for (const oy of [-s, 0, s]) draw(ox, oy); };
+  for (let i = 0; i < 14; i++) {
+    const x = rand() * s, y = rand() * s, r = s * (0.12 + rand() * 0.25);
+    const color = rand() < 0.5 ? 'rgba(150,186,86,0.28)' : 'rgba(64,104,42,0.22)';
+    wrapped((ox, oy) => { const g = ctx.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r); g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(x + ox - r, y + oy - r, r * 2, r * 2); });
   }
-  for (let i = 0; i < s * s * 0.12; i++) { ctx.fillStyle = rand() < 0.5 ? 'rgba(150,190,90,0.45)' : 'rgba(55,95,40,0.45)'; ctx.fillRect(rand() * s, rand() * s, 1, 2 + rand() * 2); }
+  const blades = ['#8dbb57', '#5f8c3a', '#9cc865', '#4f7a31', '#7fae4d'];
+  ctx.lineWidth = Math.max(1, s / 256); ctx.lineCap = 'round';
+  for (let i = 0; i < s * s * 0.05; i++) {
+    const x = rand() * s, y = rand() * s, len = s * (0.006 + rand() * 0.01), a = -Math.PI / 2 + (rand() - 0.5) * 1.2;
+    ctx.strokeStyle = blades[Math.floor(rand() * blades.length)]; ctx.globalAlpha = 0.55 + rand() * 0.4;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 });
 
 /** Piso de concreto com juntas (placas de jointMeters). */
@@ -301,7 +311,7 @@ export function paintGround(art: HTMLCanvasElement, map: GroundMap, metersPerPix
   const tileSize = (meters: number) => Math.min(1024, Math.max(64, 2 ** Math.round(Math.log2(meters * pxPerMeter))));
   const patterns: [Ground | 'mark1' | 'mark2', string | CanvasPattern][] = [
     [Ground.Asphalt, ctx.createPattern(asphaltTile(tileSize(6)), 'repeat')!],
-    [Ground.Grass, ctx.createPattern(grassTile(tileSize(4)), 'repeat')!],
+    [Ground.Grass, ctx.createPattern(grassTile(tileSize(6)), 'repeat')!],
     [Ground.Paving, ctx.createPattern(pavingTile(tileSize(4), pxPerMeter), 'repeat')!],
     ['mark1', '#f1b52e'], ['mark2', '#f4f4f0'],
   ];

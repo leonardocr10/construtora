@@ -5,6 +5,7 @@ import { buildTower, type TowerObject } from './tower';
 import { buildCars, detectCars } from './lot-relief';
 import { buildGroundMesh, classifyGround, paintGround } from './ground';
 import { planParking } from './parking';
+import { crownGeometry, trunkGeometry } from './trees';
 
 /** Converte pixels da implantação para metros no referencial do terreno (antes da rotação do azimute). */
 export function pixelToSite(layout: SiteLayout, [px, py]: Point): Point {
@@ -80,21 +81,19 @@ function detectTrees(canvas: HTMLCanvasElement, lot: Point[], footprints: { x: n
   return found;
 }
 
-/** Árvores instanciadas: tronco e copa em dois volumes, com leve variação de cor e tamanho. */
+/** Árvores instanciadas: tronco com galhos e copa orgânica, com variação de cor, tamanho e giro. */
 function buildTrees(points: [number, number, number][]) {
   const group = new THREE.Group();
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.14, 0.2, 1, 6).translate(0, 0.5, 0), new THREE.MeshStandardMaterial({ color: 0x6b4f3a, roughness: 1 }), points.length);
-  const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, flatShading: true }), points.length * 2);
+  const trunks = new THREE.InstancedMesh(trunkGeometry(), new THREE.MeshStandardMaterial({ color: 0x6a4d36, roughness: 1 }), points.length);
+  const crowns = new THREE.InstancedMesh(crownGeometry(), new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.9, flatShading: true }), points.length);
   const dummy = new THREE.Object3D(); const color = new THREE.Color();
   points.forEach(([x, z, size], i) => {
-    const trunk = size * 0.55;
-    dummy.position.set(x, 0.33, z); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, trunk, 1); dummy.updateMatrix(); trunks.setMatrixAt(i, dummy.matrix);
-    for (let j = 0; j < 2; j++) {
-      const s = size * (j ? 0.62 : 0.85);
-      dummy.position.set(x + (j ? size * 0.25 : 0), trunk + s * (j ? 1.15 : 0.75), z + (j ? -size * 0.18 : 0)); dummy.rotation.set(Math.random(), Math.random(), 0); dummy.scale.set(s, s * 0.92, s); dummy.updateMatrix();
-      crowns.setMatrixAt(i * 2 + j, dummy.matrix);
-      crowns.setColorAt(i * 2 + j, color.setHSL(0.26 + Math.random() * 0.07, 0.45, 0.26 + Math.random() * 0.1, THREE.SRGBColorSpace));
-    }
+    const trunk = size * 0.6; const spin = Math.random() * Math.PI * 2;
+    dummy.position.set(x, 0.33, z); dummy.rotation.set(0, spin, 0); dummy.scale.set(size * 0.5, trunk, size * 0.5); dummy.updateMatrix(); trunks.setMatrixAt(i, dummy.matrix);
+    const s = size * (0.95 + Math.random() * 0.2);
+    dummy.position.set(x, 0.33 + trunk + s * 0.55, z); dummy.rotation.set((Math.random() - 0.5) * 0.2, spin, (Math.random() - 0.5) * 0.2); dummy.scale.set(s, s * (0.85 + Math.random() * 0.2), s); dummy.updateMatrix();
+    crowns.setMatrixAt(i, dummy.matrix);
+    crowns.setColorAt(i, color.setHSL(0.24 + Math.random() * 0.08, 0.5 + Math.random() * 0.15, 0.3 + Math.random() * 0.08, THREE.SRGBColorSpace));
   });
   trunks.castShadow = crowns.castShadow = true; crowns.receiveShadow = true;
   group.add(trunks, crowns);
@@ -154,10 +153,15 @@ export function buildSite(development: Development, siteImageUrl: string | null)
         // Carros agrupados em fileiras alinhadas, com todas as vagas da fileira demarcadas.
         const erased = new Uint8Array(canvas.width * canvas.height);
         const parking = planParking(detectCars(canvas, layout.lot!, layout.metersPerPixel, erased), layout.metersPerPixel);
-        group.add(buildCars(parking.cars.map((car) => { const [x, z] = pixelToSite(layout, [car.x, car.y]); return { x, z, angle: car.angle, color: car.color }; })));
         // Chão modelado: asfalto, grama e piso redesenhados e calçadas/canteiros com meio-fio de verdade.
         const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, parking.stalls, erased);
         const painted = paintGround(canvas, ground, layout.metersPerPixel, parking.stalls);
+        // Carro só onde o chão ficou asfalto (sombra de árvore no gramado não vira carro).
+        const onAsphalt = (car: { x: number; y: number }) => {
+          const gx = Math.round(car.x) - ground.x0; const gy = Math.round(car.y) - ground.y0;
+          return gx >= 0 && gy >= 0 && gx < ground.w && gy < ground.h && ground.classes[gy * ground.w + gx] === 1;
+        };
+        group.add(buildCars(parking.cars.filter(onAsphalt).map((car) => { const [x, z] = pixelToSite(layout, [car.x, car.y]); return { x, z, angle: car.angle, color: car.color }; })));
         lotMesh.geometry.dispose();
         lotMesh.geometry = buildGroundMesh(ground, (p) => pixelToSite(layout, p), { u: (px) => (px - ground.x0) / ground.w, v: (py) => 1 - (py - ground.y0) / ground.h });
         const texture = new THREE.CanvasTexture(painted.canvas);

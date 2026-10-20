@@ -173,3 +173,7 @@ button { font: inherit; cursor: pointer; }
   .interior-hint { display: none; }
   .interior-note { bottom: 76px; left: 8px; right: 130px; }
 }
+
+/* Números do lazer ocultos pelo botão da barra de vistas. */
+.label.hidden-num { display: none !important; }
+#views button.off { opacity: .55; }

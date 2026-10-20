@@ -50,6 +50,7 @@ async function start() {
   createLabels();
   bindPicking();
   bindTowerHover(world, site.towers, () => state.tower);
+  if (import.meta.env.DEV) Object.assign(window, { __vista: { world, site } }); // inspeção no navegador durante o desenvolvimento
   overview(0.01);
 
   $('loading-text').textContent = 'Carregando o entorno real (OpenStreetMap)';
@@ -100,13 +101,25 @@ function renderViews() {
   ];
   const el = $('views');
   el.innerHTML = `${views.map(([icon, label], i) => `<button data-i="${i}" title="Vista ${label.toLowerCase()}">${icon}<span class="t">${label}</span></button>`).join('')}<hr>
+    <button id="numbers" title="Mostrar ou ocultar os números do lazer">①<span class="t">${numbersVisible ? 'Ocultar números' : 'Mostrar números'}</span></button>
     <button id="fullscreen" title="Tela cheia">⛶<span class="t">Tela cheia</span></button>`;
   el.querySelectorAll<HTMLButtonElement>('[data-i]').forEach((b) => b.addEventListener('click', () => { touring = false; back(true); views[Number(b.dataset.i)][2](); }));
+  $('numbers').addEventListener('click', () => setNumbers(!numbersVisible));
   $('fullscreen').addEventListener('click', () => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void document.documentElement.requestFullscreen?.();
   });
   document.addEventListener('fullscreenchange', () => { $('fullscreen').innerHTML = document.fullscreenElement ? '⤢<span class="t">Sair da tela cheia</span>' : '⛶<span class="t">Tela cheia</span>'; });
+}
+
+/** Números dos marcadores de lazer na maquete: o visitante escolhe mostrar ou ocultar (lembrado neste navegador). */
+let numbersVisible = (() => { try { return localStorage.getItem('vistahub.numbers') !== 'off'; } catch { return true; } })();
+function setNumbers(visible: boolean) {
+  numbersVisible = visible;
+  try { localStorage.setItem('vistahub.numbers', visible ? 'on' : 'off'); } catch { /* sem armazenamento */ }
+  for (const label of amenityLabels) label.classList.toggle('hidden-num', !visible);
+  const button = document.getElementById('numbers');
+  if (button) { button.classList.toggle('off', !visible); button.querySelector('.t')!.textContent = visible ? 'Ocultar números' : 'Mostrar números'; }
 }
 
 function presetView(offsetDeg: number, polar: number, distance = 300) {
@@ -142,6 +155,7 @@ function createLabels() {
     label.addEventListener('click', () => showAmenity(amenity.id));
     world.addLabel(label, anchor, { maxDistance: 900 });
     amenityLabels.push(label);
+    if (!numbersVisible) label.classList.add('hidden-num');
   }
   for (const road of site.roadAnchors) {
     const element = document.createElement('div'); element.className = 'label road'; element.textContent = road.name;
@@ -177,7 +191,8 @@ function overview(duration = 1.8) {
 }
 
 function selectTower(tower: TowerObject) {
-  if (state.tower && state.tower !== tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); }
+  if (state.tower && state.tower !== tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); state.tower.setHover(false); }
+  tower.setHover(true); // a torre escolhida fica marcada
   state.tower = tower; state.floor = null; state.unit = null;
   hideAmenities();
   towerLabels.forEach((label, id) => label.classList.toggle('on', id === tower.building.id));
@@ -326,7 +341,7 @@ function back(all = false) {
   if (!all && state.unit) { state.unit = null; state.tower!.setSelectedUnit(null); $('unit-panel').classList.add('hidden'); renderMirror(); renderCrumbs(); return; }
   if (!all && state.floor != null) { state.floor = null; state.tower!.setUnitsVisible(true, null); renderMirror(); renderCrumbs(); void world.frame3(state.tower!.center, state.tower!.height * 2.4 + 60, 62); return; }
   if (!all && state.tower && !$('mirror-panel').classList.contains('hidden')) { state.tower.setUnitsVisible(false); selectTower(state.tower); return; }
-  if (state.tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); }
+  if (state.tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); state.tower.setHover(false); }
   state.tower = null; state.floor = null; state.unit = null;
   floorLabel?.remove(); floorLabel = null;
   towerLabels.forEach((l) => l.classList.remove('on'));
