@@ -80,8 +80,36 @@ function renderChrome() {
   $('btn-tour').addEventListener('click', () => void tour());
   $('btn-about').addEventListener('click', () => about());
   renderTowerBar();
+  renderViews();
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') back(); });
   $('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
+}
+
+/** Vistas predefinidas a partir da orientação da implantação (frente = lado de baixo da arte). */
+function renderViews() {
+  const views: [string, string, () => void][] = [
+    ['◱', 'Aérea', () => void overview()],
+    ['▭', 'Frente', () => presetView(0, 72)],
+    ['▯', 'Lateral', () => presetView(90, 72)],
+    ['▢', 'Fundos', () => presetView(180, 72)],
+    ['⊡', 'Topo', () => presetView(0, 2, 420)],
+  ];
+  const el = $('views');
+  el.innerHTML = `${views.map(([icon, label], i) => `<button data-i="${i}" title="Vista ${label.toLowerCase()}">${icon}<span class="t">${label}</span></button>`).join('')}<hr>
+    <button id="fullscreen" title="Tela cheia">⛶<span class="t">Tela cheia</span></button>`;
+  el.querySelectorAll<HTMLButtonElement>('[data-i]').forEach((b) => b.addEventListener('click', () => { touring = false; back(true); views[Number(b.dataset.i)][2](); }));
+  $('fullscreen').addEventListener('click', () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen?.();
+  });
+  document.addEventListener('fullscreenchange', () => { $('fullscreen').innerHTML = document.fullscreenElement ? '⤢<span class="t">Sair da tela cheia</span>' : '⛶<span class="t">Tela cheia</span>'; });
+}
+
+function presetView(offsetDeg: number, polar: number, distance = 300) {
+  // Direção "frente" no mapa: para onde aponta a parte de baixo da implantação (azimute + 180°).
+  const bearing = (dev.viewer.layout?.azimuth ?? 0) + 180 + offsetDeg;
+  const center = new THREE.Box3().setFromObject(site.group).getCenter(new THREE.Vector3()).setY(15);
+  void world.frame3(center, distance, polar, 180 - bearing);
 }
 
 function setMode(mode: 'day' | 'sunset') {

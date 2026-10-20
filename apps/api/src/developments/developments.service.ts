@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AssetKind, DevelopmentStatus, JobStatus, Prisma } from '@prisma/client';
+import { AssetKind, DevelopmentStatus, JobStatus, Prisma, PublicationStatus } from '@prisma/client';
 import { OrganizationContext } from '../common/organization-context';
 import { PrismaService } from '../common/prisma.service';
 import { assertCanEdit } from '../common/roles';
@@ -40,6 +40,29 @@ export class DevelopmentsService {
     return this.prisma.$transaction(async (db) => {
       const updated = await db.development.update({ where: { id: current.id }, data });
       await db.auditLog.create({ data: { organizationId: context.organizationId, userId: context.userId, entityType: 'Development', entityId: id, action: 'UPDATE', before: { name: current.name, status: current.status }, after: { name: updated.name, status: updated.status } } });
+      return updated;
+    });
+  }
+
+  // Publicação: muda o status e grava uma versão imutável do que foi publicado (quem, quando, contagens).
+  async publish(context: OrganizationContext, id: string, publish: boolean) {
+    this.assertCanEdit(context);
+    const current = await this.get(context, id);
+    return this.prisma.$transaction(async (db) => {
+      const counts = { buildings: await db.building.count({ where: { developmentId: id } }), units: await db.unit.count({ where: { building: { developmentId: id } } }), assets: await db.developmentAsset.count({ where: { developmentId: id } }) };
+      if (publish && counts.buildings === 0) throw new BadRequestException('Cadastre ao menos uma torre antes de publicar');
+      const status = publish ? DevelopmentStatus.PUBLISHED : DevelopmentStatus.PREPARING;
+      const updated = await db.development.update({ where: { id }, data: { status } });
+      const publication = await db.publication.findFirst({ where: { developmentId: id }, orderBy: { publishedAt: 'desc' } })
+        ?? await db.publication.create({ data: { developmentId: id } });
+      if (publish) {
+        const last = await db.publicationVersion.aggregate({ where: { publicationId: publication.id }, _max: { version: true } });
+        const version = await db.publicationVersion.create({ data: { publicationId: publication.id, version: (last._max.version ?? 0) + 1, payload: { slug: updated.slug, name: updated.name, publishedBy: context.userId, ...counts } } });
+        await db.publication.update({ where: { id: publication.id }, data: { status: PublicationStatus.PUBLISHED, currentVersionId: version.id, publishedAt: new Date() } });
+      } else {
+        await db.publication.update({ where: { id: publication.id }, data: { status: PublicationStatus.RETIRED } });
+      }
+      await db.auditLog.create({ data: { organizationId: context.organizationId, userId: context.userId, entityType: 'Development', entityId: id, action: publish ? 'PUBLISH' : 'UNPUBLISH', before: { status: current.status }, after: { status } } });
       return updated;
     });
   }

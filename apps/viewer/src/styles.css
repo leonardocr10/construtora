@@ -16,7 +16,7 @@ button { font: inherit; cursor: pointer; }
 #app, #stage { position: fixed; inset: 0; }
 #stage canvas { display: block; }
 #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
-.brand, .actions, .crumbs, .panel, .hint, .towers, .credits, .osm, .caption { z-index: 5; }
+.brand, .actions, .crumbs, .panel, .hint, .towers, .credits, .osm, .caption, .views { z-index: 5; }
 .hidden { display: none !important; }
 .card { background: var(--card); border-radius: 14px; box-shadow: 0 6px 24px rgba(30, 20, 50, 0.14); backdrop-filter: blur(8px); }
 
@@ -86,6 +86,10 @@ button { font: inherit; cursor: pointer; }
 .chip { padding: 9px 12px; font-size: 12px; display: flex; gap: 6px; align-items: center; }
 .chip em { font-style: normal; border: 1px solid #bcd6e8; color: #2e6d96; border-radius: 99px; padding: 1px 7px; font-size: 11px; }
 .chip em.dashed { border: 1px dashed #e0b06a; color: #a2671a; }
+.views { position: fixed; right: 16px; bottom: 30px; display: flex; flex-direction: column; padding: 5px; gap: 2px; }
+.views button { border: 0; background: none; border-radius: 9px; padding: 8px 10px; font-size: 12px; text-align: left; display: flex; gap: 8px; align-items: center; }
+.views button:hover { background: #f1edf4; }
+.views hr { border: 0; border-top: 1px solid var(--line); margin: 3px 4px; }
 .osm { position: fixed; right: 8px; bottom: 4px; font-size: 11px; color: #4b4658; background: rgba(255, 255, 255, 0.7); padding: 2px 6px; border-radius: 6px; text-decoration: none; }
 
 .label { position: absolute; left: 0; top: 0; pointer-events: auto; white-space: nowrap; }
@@ -134,6 +138,8 @@ button { font: inherit; cursor: pointer; }
   .actions { top: auto; bottom: 86px; right: 8px; left: 8px; max-width: none; justify-content: center; }
   .actions .btn.card { padding: 10px 11px; font-size: 12px; }
   .hint, .credits .chip { display: none; }
+  .views { flex-direction: row; right: 8px; bottom: 76px; top: auto; }
+  .views span.t { display: none; }
   .panel, .panel.left, .panel.right, .panel.right2 { left: 8px; right: 8px; width: auto; top: auto; bottom: 150px; max-height: 52vh; }
   .crumbs { top: 84px; left: 8px; right: 8px; overflow-x: auto; }
   .modal-box { grid-template-columns: 1fr; }

@@ -36,6 +36,29 @@ Abra http://localhost:4300/union-vista (ou `/<slug>` de qualquer empreendimento 
 - `POST /api/v1/public/developments/:slug/leads`: contato com consentimento (limite de 5 por minuto).
 - `POST /api/v1/developments/:id/surroundings/refresh`: atualização do entorno (autenticada; botão no Estúdio 3D).
 
+## Publicação por link
+
+No painel, em **Estúdio 3D**, use **Publicar empreendimento**. A publicação muda o status para `PUBLISHED` e grava uma versão em `PublicationVersion` (quem publicou e as contagens daquele momento). Ao despublicar, o link deixa de funcionar na hora (404).
+
+O link para compartilhar é `GET /api/v1/public/share/:slug`: uma página leve com metadados Open Graph (título, cidade, unidades disponíveis e imagem de capa) que redireciona para o visualizador. É essa página que gera a prévia no WhatsApp. O painel mostra também o botão do WhatsApp e o QR code para baixar.
+
+Configure no `.env` de produção (com https):
+
+```
+PUBLIC_API_URL="https://api.seudominio.com.br"
+VIEWER_URL="https://3d.seudominio.com.br"
+```
+
+Em ambiente local o WhatsApp não consegue ler a página, então a prévia só aparece depois do deploy.
+
+## Navegação
+
+Arrastar gira a câmera, o botão direito move, a roda aproxima e Esc volta um nível. Há vistas predefinidas (aérea, frente, lateral, fundos e topo, orientadas pela implantação) e um botão de tela cheia.
+
+## Cadastro em lote
+
+Em **Torres e pavimentos**, o gerador cria pavimentos e unidades com um padrão de numeração (`{andar}{final:02}`) e, se quiser, vincula uma planta a cada final. Tudo roda numa única transação (`POST /api/v1/buildings/:id/generate`): se algo falhar, nada é criado. No mesmo lugar ficam os parâmetros 3D da torre (pé-direito, largura, profundidade, posição, rotação e cores).
+
 ## Union Vista
 
 Importado por `scripts/import/union-vista.mjs` a partir do e-book e do espelho de vendas:
@@ -63,3 +86,4 @@ Os dados do OpenStreetMap são livres sob a licença ODbL. O crédito "© colabo
 
 - Planta 3D mobiliada e tour interno (exige vetorizar a planta: paredes, portas e janelas).
 - Extração automática do e-book por IA (torres, pavimentos, finais e plantas) e editor visual da implantação no painel.
+- Login só com e-mail e senha e as telas do painel SaaS.

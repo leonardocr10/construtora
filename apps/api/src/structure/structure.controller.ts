@@ -37,6 +37,14 @@ class UnitDto implements UnitInput {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) totalArea?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) price?: number;
 }
+class GenerateUnitsDto {
+  @Type(() => Number) @IsInt() @Min(-5) from!: number;
+  @Type(() => Number) @IsInt() @Min(-5) to!: number;
+  @Type(() => Number) @IsInt() @Min(1) perFloor!: number;
+  @IsString() @MaxLength(60) pattern!: string;
+  /** Final ("01") → id da planta. */
+  @IsOptional() @IsObject() floorPlansByFinal?: Record<string, string>;
+}
 class UnitStatusDto { @IsEnum(UnitStatus) status!: UnitStatus; @IsOptional() @IsString() @MaxLength(255) reason?: string; }
 class FloorPlanDto implements FloorPlanInput {
   @IsString() @MaxLength(120) name!: string;
@@ -71,6 +79,7 @@ export class StructureController {
   @Post('developments/:id/buildings') createBuilding(@Req() r: Request, @Param('id') id: string, @Body() body: BuildingDto) { return this.structure.createBuilding(r.organization, id, body); }
   @Patch('buildings/:id') updateBuilding(@Req() r: Request, @Param('id') id: string, @Body() body: Partial<BuildingDto>) { return this.structure.updateBuilding(r.organization, id, body); }
 
+  @Post('buildings/:id/generate') generate(@Req() r: Request, @Param('id') id: string, @Body() body: GenerateUnitsDto) { return this.structure.generateUnits(r.organization, id, body); }
   @Post('buildings/:id/floors') createFloor(@Req() r: Request, @Param('id') id: string, @Body() body: FloorDto) { return this.structure.createFloor(r.organization, id, body); }
 
   @Get('buildings/:id/units') units(@Req() r: Request, @Param('id') id: string) { return this.structure.listUnits(r.organization, id); }

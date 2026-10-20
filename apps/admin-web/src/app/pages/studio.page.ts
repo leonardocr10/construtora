@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
-import { ApiService, ModelVersion, VIEWER_URL, errorMessage } from '../core/api.service';
+import QRCode from 'qrcode';
+import { ApiService, ModelVersion, SHARE_URL, VIEWER_URL, errorMessage } from '../core/api.service';
 import { DevelopmentContext } from '../core/development-context';
 import { bytes, dateTime, val } from '../core/labels';
 
@@ -18,6 +19,27 @@ import { bytes, dateTime, val } from '../core/labels';
         @if (dev(); as d) { <a class="btn blue" [href]="viewerUrl + '/' + d.slug" target="_blank" rel="noopener">Abrir visualizador 3D</a> }
         <button class="btn soft" [disabled]="busy()" (click)="refreshSurroundings()">Atualizar entorno (OSM)</button>
       </div></div>
+      @if (dev(); as d) {
+        <div class="card shadow" style="margin-bottom:18px"><div class="pad" style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+          <div style="flex:1;min-width:280px">
+            <h3>Publicação por link</h3>
+            @if (d.status === 'PUBLISHED') {
+              <p class="small">Publicado. Página exclusiva do empreendimento, pronta para enviar pelo WhatsApp (com título, descrição e imagem de capa na prévia).</p>
+              <div class="field"><label>Link para compartilhar</label><input class="input" readonly [value]="shareLink()" (focus)="select($event)"></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn soft" (click)="copy()">{{ copied() ? 'Copiado ✓' : 'Copiar link' }}</button>
+                <a class="btn blue" [href]="whatsapp()" target="_blank" rel="noopener">Enviar pelo WhatsApp</a>
+                <button class="btn soft" [disabled]="busy()" (click)="setPublished(false)">Despublicar</button>
+              </div>
+              <p class="small" style="margin-top:10px">A prévia do WhatsApp só aparece quando a API estiver num endereço público (https). Em ambiente local o link funciona apenas neste computador.</p>
+            } @else {
+              <p class="small">Ainda não publicado (situação: {{ d.status }}). Ao publicar, a página 3D fica acessível a qualquer pessoa com o link.</p>
+              <button class="btn blue" [disabled]="busy()" (click)="setPublished(true)">Publicar empreendimento</button>
+            }
+          </div>
+          @if (d.status === 'PUBLISHED' && qr()) { <div style="text-align:center"><img [src]="qr()" width="168" height="168" alt="QR code do link"><p class="small"><a [href]="qr()" [attr.download]="d.slug + '-qrcode.png'">Baixar QR code</a></p></div> }
+        </div></div>
+      }
       <div class="three">
         <div class="card shadow"><div class="pad"><h3>Versões do modelo</h3>
           @for (m of models(); track m.id) {
@@ -72,7 +94,11 @@ export class StudioPage {
   readonly camera = signal('Perspectiva aérea'); readonly autoRotate = signal(false);
   readonly busy = signal(false);
   readonly viewerUrl = VIEWER_URL;
-  readonly dev = signal<{ slug: string; status: string } | null>(null);
+  readonly dev = signal<{ slug: string; status: string; name: string } | null>(null);
+  readonly shareLink = computed(() => this.dev() ? `${SHARE_URL}/${this.dev()!.slug}` : '');
+  readonly whatsapp = computed(() => `https://wa.me/?text=${encodeURIComponent(`${this.dev()?.name ?? ''} em 3D: escolha sua unidade ${this.shareLink()}`)}`);
+  readonly qr = signal<string | null>(null);
+  readonly copied = signal(false);
   readonly error = signal<string | null>(null);
   readonly message = signal<string | null>(null);
 
@@ -83,7 +109,8 @@ export class StudioPage {
   async load() {
     try {
       this.models.set(await this.api.get<ModelVersion[]>(`/developments/${this.id()}/models`));
-      this.dev.set(await this.api.get<{ slug: string; status: string }>(`/developments/${this.id()}`));
+      this.dev.set(await this.api.get<{ slug: string; status: string; name: string }>(`/developments/${this.id()}`));
+      this.qr.set(this.dev()!.status === 'PUBLISHED' ? await QRCode.toDataURL(this.shareLink(), { width: 336, margin: 1 }) : null);
     }
     catch (error) { this.error.set(errorMessage(error)); }
   }
@@ -105,6 +132,13 @@ export class StudioPage {
       return 'Modelo importado.';
     });
   }
+
+  setPublished(publish: boolean) {
+    void this.run(async () => { await this.api.post(`/developments/${this.id()}/${publish ? 'publish' : 'unpublish'}`, {}); await this.ctx.refresh(); return publish ? 'Empreendimento publicado.' : 'Empreendimento despublicado.'; });
+  }
+
+  select(event: Event) { (event.target as HTMLInputElement).select(); }
+  async copy() { await navigator.clipboard.writeText(this.shareLink()); this.copied.set(true); setTimeout(() => this.copied.set(false), 2000); }
 
   refreshSurroundings() {
     void this.run(async () => {

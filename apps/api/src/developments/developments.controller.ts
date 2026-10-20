@@ -51,6 +51,8 @@ export class DevelopmentsController {
   @Get(':id') get(@Req() request: { organization: OrganizationContext }, @Param('id') id: string) { return this.developments.get(request.organization, id); }
   @Post() create(@Req() request: { organization: OrganizationContext }, @Body() body: DevelopmentDto) { return this.developments.create(request.organization, body); }
   @Patch(':id') update(@Req() request: { organization: OrganizationContext }, @Param('id') id: string, @Body() body: Partial<DevelopmentDto>) { return this.developments.update(request.organization, id, body); }
+  @Post(':id/publish') publish(@Req() request: { organization: OrganizationContext }, @Param('id') id: string) { return this.developments.publish(request.organization, id, true); }
+  @Post(':id/unpublish') unpublish(@Req() request: { organization: OrganizationContext }, @Param('id') id: string) { return this.developments.publish(request.organization, id, false); }
   @Get(':id/assets') assets(@Req() request: { organization: OrganizationContext }, @Param('id') id: string) { return this.developments.listAssets(request.organization, id); }
   @Post(':id/assets') @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 200 * 1024 * 1024 } }))
   async uploadAsset(@Req() request: { organization: OrganizationContext }, @Param('id') id: string, @Body() body: AssetUploadDto, @UploadedFile() file?: UploadedAsset) {

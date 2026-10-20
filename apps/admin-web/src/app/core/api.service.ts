@@ -4,6 +4,8 @@ import { Router } from '@angular/router';
 export const API_URL = 'http://localhost:3000/api/v1';
 /** Visualizador 3D público (apps/viewer). */
 export const VIEWER_URL = 'http://localhost:4300';
+/** Link de compartilhamento com prévia (Open Graph) servido pela API. */
+export const SHARE_URL = `${API_URL}/public/share`;
 
 export type DevelopmentStatus = 'DRAFT' | 'PREPARING' | 'PUBLISHED' | 'ARCHIVED';
 export type UnitStatus = 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'BLOCKED' | 'UNAVAILABLE';
@@ -18,7 +20,12 @@ export interface Development {
   _count?: { buildings: number; assets?: number };
 }
 export interface Floor { id: string; buildingId: string; name: string; number: number; sortOrder: number; }
-export interface Building { id: string; developmentId: string; name: string; code: string; sortOrder: number; floors: Floor[]; _count: { units: number }; }
+export interface Building3D { width?: number; depth?: number; elevators?: number; colors?: { facade?: string; accent?: string; roof?: string }; unitSlots?: { final: string; side: 'front' | 'back'; column: number }[] }
+export interface Building {
+  id: string; developmentId: string; name: string; code: string; sortOrder: number; floors: Floor[]; _count: { units: number };
+  floorCount: number | null; unitsPerFloor: number | null; floorHeight: string | number | null;
+  position: { x: number; z: number; rotation?: number } | null; model3d: Building3D | null;
+}
 export interface FloorPlan { id: string; name: string; code: string | null; area: string | number | null; bedrooms: number | null; suites: number | null; bathrooms: number | null; parkingSpaces: number | null; description: string | null; assets: { id: string; kind: AssetKind; originalName: string }[]; _count: { units: number }; }
 export interface Unit {
   id: string; buildingId: string; floorId: string | null; number: string; final: string | null; status: UnitStatus;

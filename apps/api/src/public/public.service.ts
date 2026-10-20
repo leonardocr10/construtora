@@ -66,6 +66,26 @@ export class PublicService {
     };
   }
 
+  /** Página leve com metadados Open Graph para a prévia do link no WhatsApp/redes, que redireciona ao visualizador. */
+  async sharePage(slug: string) {
+    const development = await this.published(slug);
+    const apiUrl = (process.env.PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const viewerUrl = `${(process.env.VIEWER_URL ?? 'http://localhost:4300').replace(/\/$/, '')}/${encodeURIComponent(development.slug)}`;
+    const units = await this.prisma.unit.groupBy({ by: ['status'], where: { building: { developmentId: development.id } }, _count: true });
+    const available = units.find((u) => u.status === 'AVAILABLE')?._count ?? 0;
+    const place = [development.city, development.state].filter(Boolean).join(' · ');
+    const title = `${development.name}${place ? ` · ${place}` : ''}`;
+    const description = `Explore em 3D: escolha a torre, o andar e o apartamento. ${available} unidades disponíveis.${development.description ? ` ${development.description}` : ''}`.slice(0, 280);
+    const image = development.coverAssetId ? `${apiUrl}/api/v1/public/assets/${development.coverAssetId}` : null;
+    const e = (v: string) => v.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+    return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${e(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="${e(description)}">
+<meta property="og:type" content="website"><meta property="og:locale" content="pt_BR"><meta property="og:title" content="${e(title)}"><meta property="og:description" content="${e(description)}"><meta property="og:url" content="${e(viewerUrl)}">
+${image ? `<meta property="og:image" content="${e(image)}"><meta property="og:image:width" content="1200"><meta name="twitter:card" content="summary_large_image">` : ''}
+<meta http-equiv="refresh" content="0; url=${e(viewerUrl)}"><link rel="canonical" href="${e(viewerUrl)}"></head>
+<body style="font-family:system-ui;padding:24px"><p>Abrindo <a href="${e(viewerUrl)}">${e(development.name)} em 3D</a>…</p></body></html>`;
+  }
+
   async asset(id: string) {
     const asset = await this.prisma.developmentAsset.findFirst({ where: { id, development: { status: DevelopmentStatus.PUBLISHED, archivedAt: null } } });
     if (!asset || !publicKinds.has(asset.kind)) throw new NotFoundException('Arquivo não encontrado');

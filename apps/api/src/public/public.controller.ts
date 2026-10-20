@@ -32,6 +32,14 @@ export class PublicController {
     return this.publicService.development(slug, sessionHash);
   }
 
+  @Get('share/:slug')
+  async share(@Param('slug') slug: string, @Res() response: StreamResponse & { send(body: string): void }) {
+    const html = await this.publicService.sharePage(slug);
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.setHeader('Cache-Control', 'public, max-age=300');
+    response.send(html);
+  }
+
   @Get('developments/:slug/surroundings')
   surroundings(@Param('slug') slug: string) { return this.publicService.surroundings(slug); }
 

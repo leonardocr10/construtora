@@ -5,6 +5,14 @@ import { PrismaService } from '../common/prisma.service';
 import { assertCanEdit, assertCommercial } from '../common/roles';
 
 type Db = Prisma.TransactionClient;
+
+/** Aplica o padrão de numeração: {andar}, {final}, {final:02} e {torre}. */
+export function unitNumber(pattern: string, floor: number, final: number, building: string) {
+  return pattern
+    .replace(/\{andar\}/g, String(floor))
+    .replace(/\{final(?::(\d+))?\}/g, (_m, pad?: string) => String(final).padStart(pad ? Number(pad) : 1, '0'))
+    .replace(/\{torre\}/g, building);
+}
 export interface BuildingInput { name: string; code: string; sortOrder?: number; imageAssetId?: string; floorCount?: number; unitsPerFloor?: number; floorHeight?: number; position?: Prisma.InputJsonValue; model3d?: Prisma.InputJsonValue; }
 export interface FloorInput { name: string; number: number; sortOrder?: number; }
 export interface UnitInput { number: string; floorId?: string; unitTypeId?: string; final?: string; status?: UnitStatus; privateArea?: number; totalArea?: number; price?: number; }
@@ -74,6 +82,42 @@ export class StructureService {
       await this.audit(db, context, 'Floor', floor.id, 'CREATE', { name: floor.name, number: floor.number });
       return floor;
     });
+  }
+
+  /**
+   * Gera pavimentos e unidades de uma torre numa única transação (tudo ou nada).
+   * Reaproveita pavimentos existentes, ignora números já cadastrados e vincula plantas por final.
+   */
+  async generateUnits(context: OrganizationContext, buildingId: string, input: { from: number; to: number; perFloor: number; pattern: string; floorPlansByFinal?: Record<string, string> }) {
+    assertCanEdit(context);
+    if (input.to < input.from || input.perFloor < 1 || input.perFloor > 64 || input.to - input.from > 200) throw new BadRequestException('Intervalo de pavimentos ou quantidade de unidades inválido');
+    return this.prisma.$transaction(async (db) => {
+      const building = await this.building(context, buildingId, db);
+      const plans = input.floorPlansByFinal ?? {};
+      const planIds = [...new Set(Object.values(plans).filter(Boolean))];
+      if (planIds.length && (await db.floorPlan.count({ where: { id: { in: planIds }, developmentId: building.developmentId } })) !== planIds.length) throw new BadRequestException('Planta não pertence ao empreendimento');
+      const existing = new Set((await db.unit.findMany({ where: { buildingId }, select: { number: true } })).map((u) => u.number));
+      let created = 0; let floorsCreated = 0;
+      for (let n = input.from; n <= input.to; n++) {
+        let floor = await db.floor.findUnique({ where: { buildingId_number: { buildingId, number: n } } });
+        if (!floor) { floor = await db.floor.create({ data: { buildingId, number: n, sortOrder: n, name: n === 0 ? 'Térreo' : `${n}º pavimento` } }); floorsCreated++; }
+        for (let i = 1; i <= input.perFloor; i++) {
+          const final = String(i).padStart(2, '0');
+          const number = unitNumber(input.pattern, n, i, building.code);
+          if (!number || number.length > 20) throw new BadRequestException('Padrão de numeração inválido');
+          if (existing.has(number)) continue;
+          const unit = await db.unit.create({ data: { buildingId, floorId: floor.id, number, final } });
+          await db.salesStatusHistory.create({ data: { unitId: unit.id, status: unit.status, changedById: context.userId, reason: 'Geração em lote' } });
+          const planId = plans[final] ?? plans[String(i)];
+          if (planId) await db.unitFloorPlan.create({ data: { unitId: unit.id, floorPlanId: planId, primary: true } });
+          existing.add(number); created++;
+        }
+      }
+      const floorCount = await db.floor.count({ where: { buildingId } });
+      await db.building.update({ where: { id: buildingId }, data: { floorCount, unitsPerFloor: input.perFloor } });
+      await this.audit(db, context, 'Building', buildingId, 'GENERATE_UNITS', { from: input.from, to: input.to, perFloor: input.perFloor, created, floorsCreated });
+      return { created, floorsCreated, floorCount };
+    }, { timeout: 60_000 });
   }
 
   // Unidades

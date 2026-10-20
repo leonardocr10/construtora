@@ -7,10 +7,38 @@
       "root": "",
       "sourceRoot": "src",
       "architect": {
-        "build": { "builder": "@angular/build:application", "options": { "browser": "src/main.ts", "tsConfig": "tsconfig.app.json", "assets": [{ "glob": "**/*", "input": "public" }], "styles": ["src/styles.scss"] } },
-        "serve": { "builder": "@angular/build:dev-server", "configurations": { "development": { "buildTarget": "admin-web:build" } }, "defaultConfiguration": "development" }
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "src/main.ts",
+            "tsConfig": "tsconfig.app.json",
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "public"
+              }
+            ],
+            "styles": [
+              "src/styles.scss"
+            ],
+            "allowedCommonJsDependencies": [
+              "qrcode"
+            ]
+          }
+        },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "configurations": {
+            "development": {
+              "buildTarget": "admin-web:build"
+            }
+          },
+          "defaultConfiguration": "development"
+        }
       }
     }
   },
-  "cli": { "analytics": false }
+  "cli": {
+    "analytics": false
+  }
 }
