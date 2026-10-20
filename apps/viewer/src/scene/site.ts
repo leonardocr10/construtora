@@ -4,6 +4,7 @@ import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
 import { buildCars, detectCars } from './lot-relief';
 import { buildGroundMesh, classifyGround, paintGround } from './ground';
+import { planParking } from './parking';
 
 /** Converte pixels da implantação para metros no referencial do terreno (antes da rotação do azimute). */
 export function pixelToSite(layout: SiteLayout, [px, py]: Point): Point {
@@ -150,11 +151,13 @@ export function buildSite(development: Development, siteImageUrl: string | null)
       new THREE.ImageLoader().load(siteImageUrl, (image) => {
         const canvas = eraseMarkers(image, markers, layout.markerRadius ?? Math.round(layout.imageWidth * 0.0145));
         // Carros desenhados viram volumes 3D; o asfalto fica rebaixado em relação às calçadas e gramados.
-        const cars = detectCars(canvas, layout.lot!, layout.metersPerPixel);
-        group.add(buildCars(cars.map((car) => { const [x, z] = pixelToSite(layout, [car.x, car.y]); return { x, z, angle: car.angle, color: car.color }; })));
+        // Carros agrupados em fileiras alinhadas, com todas as vagas da fileira demarcadas.
+        const erased = new Uint8Array(canvas.width * canvas.height);
+        const parking = planParking(detectCars(canvas, layout.lot!, layout.metersPerPixel, erased), layout.metersPerPixel);
+        group.add(buildCars(parking.cars.map((car) => { const [x, z] = pixelToSite(layout, [car.x, car.y]); return { x, z, angle: car.angle, color: car.color }; })));
         // Chão modelado: asfalto, grama e piso redesenhados e calçadas/canteiros com meio-fio de verdade.
-        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel);
-        const painted = paintGround(canvas, ground, layout.metersPerPixel, cars);
+        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, parking.stalls, erased);
+        const painted = paintGround(canvas, ground, layout.metersPerPixel, parking.stalls);
         lotMesh.geometry.dispose();
         lotMesh.geometry = buildGroundMesh(ground, (p) => pixelToSite(layout, p), { u: (px) => (px - ground.x0) / ground.w, v: (py) => 1 - (py - ground.y0) / ground.h });
         const texture = new THREE.CanvasTexture(painted.canvas);

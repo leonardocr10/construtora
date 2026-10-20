@@ -8,7 +8,12 @@ export const lotBase = 0.18;
 function carColor(rgb: [number, number, number] | null) {
   if (!rgb) return fleetColor(Math.random() * 1000);
   const [r, g, b] = rgb; const lum = 0.3 * r + 0.59 * g + 0.11 * b; const sat = (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(1, Math.max(r, g, b));
-  if (sat > 0.28) return new THREE.Color().setHSL(new THREE.Color(`rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`).getHSL({ h: 0, s: 0, l: 0 }).h, 0.62, 0.36, THREE.SRGBColorSpace);
+  if (sat > 0.28) {
+    const hue = new THREE.Color(`rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`).getHSL({ h: 0, s: 0, l: 0 }).h;
+    // Laranja/amarelo costuma ser a faixa da vaga pintada, não o carro: usa a frota comum.
+    if (hue > 0.04 && hue < 0.2) return fleetColor(r * 7 + g * 13 + b * 17);
+    return new THREE.Color().setHSL(hue, 0.62, 0.36, THREE.SRGBColorSpace);
+  }
   if (lum > 175) return new THREE.Color(0xf1f1ee);
   if (lum > 125) return new THREE.Color(0xb6b9bd);
   return fleetColor(r * 7 + g * 13 + b * 17);
@@ -41,20 +46,36 @@ function asphaltAt(data: Uint8ClampedArray, k: number) {
 }
 
 /**
+ * Calçada bege/cinza clara e grama: não são carro. Sem isso, carros encostados numa faixa de calçada
+ * ou num canteiro se fundem com ela numa mancha grande demais e são descartados.
+ */
+function groundAt(data: Uint8ClampedArray, k: number) {
+  const r = data[k]; const g = data[k + 1]; const b = data[k + 2];
+  const max = Math.max(r, g, b); const min = Math.min(r, g, b); const sat = max ? (max - min) / max : 0;
+  const lum = 0.3 * r + 0.59 * g + 0.11 * b;
+  if (g > r * 1.04 && g > b * 1.15 && sat > 0.25) return true; // grama
+  return lum > 165 && lum < 205 && sat > 0.04 && sat < 0.2 && r >= b; // piso bege
+}
+
+/**
  * Encontra os carros desenhados na implantação: manchas compactas e alongadas cercadas de asfalto.
  * Cada carro encontrado é apagado da arte (pintado com o asfalto ao redor) para virar um volume 3D.
  */
-export function detectCars(canvas: HTMLCanvasElement, lot: Point[], metersPerPixel: number): DetectedCar[] {
+/** `erased` (opcional, tamanho da arte) recebe 1 nos pixels de carro/sombra apagados, para o chão reconstruí-los. */
+export function detectCars(canvas: HTMLCanvasElement, lot: Point[], metersPerPixel: number, erased?: Uint8Array): DetectedCar[] {
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   const xs = lot.map((p) => p[0]); const ys = lot.map((p) => p[1]);
   const x0 = Math.max(0, Math.floor(Math.min(...xs))); const y0 = Math.max(0, Math.floor(Math.min(...ys)));
   const w = Math.min(canvas.width, Math.ceil(Math.max(...xs))) - x0; const h = Math.min(canvas.height, Math.ceil(Math.max(...ys))) - y0;
   const image = ctx.getImageData(x0, y0, w, h); const data = image.data;
   const m2 = metersPerPixel * metersPerPixel;
+  // Uma fileira de até ~16 vagas (2,5 × 6 m cada) ainda é analisada.
+  const maxPixels = Math.round(240 / m2);
   // 1 = não asfalto dentro do lote (candidato), 0 = asfalto ou fora do lote.
   const mask = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    if (!asphaltAt(data, (y * w + x) * 4) && insidePolygon([x + x0, y + y0], lot)) mask[y * w + x] = 1;
+    const k = (y * w + x) * 4;
+    if (!asphaltAt(data, k) && !groundAt(data, k) && insidePolygon([x + x0, y + y0], lot)) mask[y * w + x] = 1;
   }
   const seen = new Uint8Array(w * h); const cars: DetectedCar[] = [];
   const stack: number[] = [];
@@ -70,7 +91,7 @@ export function detectCars(canvas: HTMLCanvasElement, lot: Point[], metersPerPix
       const pr = data[i * 4]; const pg = data[i * 4 + 1]; const pb = data[i * 4 + 2];
       if (0.3 * pr + 0.59 * pg + 0.11 * pb > 58) { cr += pr; cg += pg; cb += pb; lit++; }
       if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
-      if (n > 900) continue; // grande demais para ser carro: só termina de marcar
+      if (n > maxPixels) continue; // grande demais para ser carro ou fileira: só termina de marcar
       for (const j of [i - 1, i + 1, i - w, i + w]) {
         if (j < 0 || j >= mask.length || seen[j] || !mask[j]) continue;
         if ((j === i - 1 && x === 0) || (j === i + 1 && x === w - 1)) continue;
@@ -78,26 +99,52 @@ export function detectCars(canvas: HTMLCanvasElement, lot: Point[], metersPerPix
       }
     }
     const area = n * m2;
-    if (n > 900 || area < 1.2 || area > 9) continue;
+    if (n > maxPixels || area < 1.2) continue;
     const mx = sx / n; const my = sy / n;
     const cxx = sxx / n - mx * mx; const cyy = syy / n - my * my; const cxy = sxy / n - mx * my;
     const angle = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
     const root = Math.sqrt(((cxx - cyy) / 2) ** 2 + cxy * cxy);
     const long = Math.sqrt(12 * Math.max((cxx + cyy) / 2 + root, 0)) * metersPerPixel;
     const short = Math.sqrt(12 * Math.max((cxx + cyy) / 2 - root, 0)) * metersPerPixel;
-    if (long < 1.8 || long > 5.8 || short < 0.8 || short > 2.8 || long / short < 1.25) continue;
+    const single = area <= 14 && long >= 1.8 && long <= 6.8 && short >= 0.8 && short <= 3.2 && long / short >= 1.25;
+    // Fileira: carros lado a lado (com sombras) fundidos numa mancha estreita da largura de um carro.
+    const row = !single && short >= 3.2 && short <= 6.8 && long >= 4.5 && long / short >= 1.5;
+    if (!single && !row) continue;
     // Precisa estar cercado de asfalto (vagas e pistas), não colado em calçadas ou gramados.
     let ring = 0, asphalt = 0;
     for (let x = minX - 3; x <= maxX + 3; x++) for (const y of [minY - 3, maxY + 3]) { if (x < 0 || y < 0 || x >= w || y >= h) continue; ring++; if (asphaltAt(data, (y * w + x) * 4)) asphalt++; }
     for (let y = minY - 3; y <= maxY + 3; y++) for (const x of [minX - 3, maxX + 3]) { if (x < 0 || y < 0 || x >= w || y >= h) continue; ring++; if (asphaltAt(data, (y * w + x) * 4)) asphalt++; }
-    if (!ring || asphalt / ring < 0.4) continue;
-    cars.push({ x: mx + x0, y: my + y0, angle, color: lit > n * 0.25 ? carColor([cr / lit, cg / lit, cb / lit]) : fleetColor(mx * 31 + my * 17) });
-    // Apaga o carro (e a sombra próxima) com a cor média do anel de asfalto.
+    if (!ring || asphalt / ring < (row ? 0.3 : 0.4)) continue;
+    const colorAt = (seedX: number, seedY: number, r: number, g: number, b: number, litCount: number, total: number) => (litCount > total * 0.25 ? carColor([r / litCount, g / litCount, b / litCount]) : fleetColor(seedX * 31 + seedY * 17));
+    if (single) cars.push({ x: mx + x0, y: my + y0, angle, color: colorAt(mx, my, cr, cg, cb, lit, n) });
+    else {
+      // Divide a fileira em vagas de 2,5 m ao longo do eixo longo; cada vaga ocupada vira um carro de frente para o eixo curto.
+      const ux = Math.cos(angle); const uy = Math.sin(angle); const pitch = 2.5 / metersPerPixel;
+      const half = (long / metersPerPixel) / 2; const slots = Math.max(1, Math.round((half * 2) / pitch));
+      const start = -(slots * pitch) / 2;
+      const bins = Array.from({ length: slots }, () => ({ n: 0, r: 0, g: 0, b: 0, lit: 0 }));
+      for (const i of pixels) {
+        const x = i % w; const y = (i - x) / w;
+        const t = (x - mx) * ux + (y - my) * uy; const k = Math.floor((t - start) / pitch);
+        if (k < 0 || k >= slots) continue;
+        const bin = bins[k]; bin.n++;
+        const pr = data[i * 4]; const pg = data[i * 4 + 1]; const pb = data[i * 4 + 2];
+        if (0.3 * pr + 0.59 * pg + 0.11 * pb > 58) { bin.r += pr; bin.g += pg; bin.b += pb; bin.lit++; }
+      }
+      const full = (pitch * short) / metersPerPixel;
+      bins.forEach((bin, k) => {
+        if (bin.n < full * 0.35) return; // vaga vazia
+        const t = start + (k + 0.5) * pitch;
+        const cx = mx + ux * t; const cy = my + uy * t;
+        cars.push({ x: cx + x0, y: cy + y0, angle: angle + Math.PI / 2, color: colorAt(cx, cy, bin.r, bin.g, bin.b, bin.lit, bin.n) });
+      });
+    }
+    // Apaga a mancha (carros e sombras) pixel a pixel com a cor média do asfalto em volta.
     let ar = 0, ag = 0, ab = 0, an = 0;
     for (let x = minX - 3; x <= maxX + 3; x++) for (const y of [minY - 4, maxY + 4]) { if (x < 0 || y < 0 || x >= w || y >= h) continue; const k = (y * w + x) * 4; if (!asphaltAt(data, k)) continue; ar += data[k]; ag += data[k + 1]; ab += data[k + 2]; an++; }
     if (an) {
       ctx.fillStyle = `rgb(${Math.round(ar / an)},${Math.round(ag / an)},${Math.round(ab / an)})`;
-      ctx.fillRect(minX + x0 - 2, minY + y0 - 2, maxX - minX + 5, maxY - minY + 5);
+      for (const i of pixels) { const x = i % w; const y = (i - x) / w; ctx.fillRect(x + x0 - 1, y + y0 - 1, 3, 3); if (erased) erased[(y + y0) * canvas.width + x + x0] = 1; }
     }
   }
   return cars;

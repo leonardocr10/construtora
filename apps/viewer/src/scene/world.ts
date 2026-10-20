@@ -15,7 +15,7 @@ interface Label { element: HTMLElement; position: THREE.Vector3; minDistance?: n
 interface Palette { top: THREE.Color; bottom: THREE.Color; fog: THREE.Color; sun: THREE.Color; hemiSky: THREE.Color; hemiGround: THREE.Color; sunIntensity: number; hemiIntensity: number; elevation: number; azimuth: number; exposure: number; fogNear: number; fogFar: number }
 const c = (hex: string) => new THREE.Color(hex);
 const palettes: Record<LightMode, Palette> = {
-  day: { top: c('#9cc4e4'), bottom: c('#eef1ee'), fog: c('#e6ebe8'), sun: c('#fff4e0'), hemiSky: c('#dfeaf5'), hemiGround: c('#b9b29e'), sunIntensity: 2.6, hemiIntensity: 1.25, elevation: 55, azimuth: 35, exposure: 1, fogNear: 900, fogFar: 3200 },
+  day: { top: c('#9cc4e4'), bottom: c('#eef1ee'), fog: c('#e6ebe8'), sun: c('#fff4e0'), hemiSky: c('#dfeaf5'), hemiGround: c('#b9b29e'), sunIntensity: 2.2, hemiIntensity: 1.7, elevation: 62, azimuth: 35, exposure: 1, fogNear: 900, fogFar: 3200 },
   // Fim de tarde: céu enevoado e quente, sol baixo a oeste, sombras longas e luz difusa reduzida.
   sunset: { top: c('#b3a49d'), bottom: c('#e6c49c'), fog: c('#dcc0a0'), sun: c('#ffae6e'), hemiSky: c('#e6cdb6'), hemiGround: c('#8f7a69'), sunIntensity: 2.2, hemiIntensity: 1.15, elevation: 14, azimuth: -72, exposure: 1.0, fogNear: 420, fogFar: 2800 },
 };
