@@ -42,6 +42,7 @@ async function start() {
   const siteImage = dev.viewer.layout?.siteImageAssetId ? api.assetUrl(dev.viewer.layout.siteImageAssetId) : null;
   site = buildSite(dev, siteImage);
   world.scene.add(site.group);
+  world.onDusk((t) => { for (const tower of site.towers) tower.setDusk(t); });
 
   renderChrome();
   createLabels();

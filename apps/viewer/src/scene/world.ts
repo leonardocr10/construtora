@@ -6,10 +6,14 @@ export type LightMode = 'day' | 'sunset';
 interface Flight { fromPos: THREE.Vector3; fromTarget: THREE.Vector3; toPos: THREE.Vector3; toTarget: THREE.Vector3; start: number; duration: number; resolve: () => void }
 interface Label { element: HTMLElement; position: THREE.Vector3; minDistance?: number; maxDistance?: number }
 
-const palettes: Record<LightMode, { top: string; bottom: string; fog: number; sun: number; sunIntensity: number; hemiSky: number; hemiGround: number; hemiIntensity: number; elevation: number; azimuth: number; exposure: number }> = {
-  day: { top: '#9cc4e4', bottom: '#eef1ee', fog: 0xe6ebe8, sun: 0xfff4e0, sunIntensity: 2.6, hemiSky: 0xdfeaf5, hemiGround: 0xb9b29e, hemiIntensity: 1.25, elevation: 55, azimuth: 35, exposure: 1 },
-  sunset: { top: '#5d6a9a', bottom: '#f7c08e', fog: 0xf0c9a6, sun: 0xffb070, sunIntensity: 2.3, hemiSky: 0xffe2c8, hemiGround: 0xa89584, hemiIntensity: 1.35, elevation: 17, azimuth: 290, exposure: 1.02 },
+interface Palette { top: THREE.Color; bottom: THREE.Color; fog: THREE.Color; sun: THREE.Color; hemiSky: THREE.Color; hemiGround: THREE.Color; sunIntensity: number; hemiIntensity: number; elevation: number; azimuth: number; exposure: number; fogNear: number; fogFar: number }
+const c = (hex: string) => new THREE.Color(hex);
+const palettes: Record<LightMode, Palette> = {
+  day: { top: c('#9cc4e4'), bottom: c('#eef1ee'), fog: c('#e6ebe8'), sun: c('#fff4e0'), hemiSky: c('#dfeaf5'), hemiGround: c('#b9b29e'), sunIntensity: 2.6, hemiIntensity: 1.25, elevation: 55, azimuth: 35, exposure: 1, fogNear: 900, fogFar: 3200 },
+  // Fim de tarde: céu enevoado e quente, sol baixo a oeste, sombras longas e luz difusa reduzida.
+  sunset: { top: c('#b3a49d'), bottom: c('#e6c49c'), fog: c('#dcc0a0'), sun: c('#ffae6e'), hemiSky: c('#e6cdb6'), hemiGround: c('#8f7a69'), sunIntensity: 2.2, hemiIntensity: 1.15, elevation: 14, azimuth: -72, exposure: 1.0, fogNear: 420, fogFar: 2800 },
 };
+const transitionSeconds = 3.2;
 
 /** Cena base: renderizador, câmera orbital, céu, luz do sol e rótulos HTML projetados. */
 export class World {
@@ -50,31 +54,50 @@ export class World {
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.6;
     this.scene.add(this.sun, this.sun.target, this.hemi);
-    this.setMode('day');
+    this.setMode('day', true);
 
     new ResizeObserver(() => this.resize()).observe(host);
     this.resize();
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
-  setMode(mode: LightMode) {
+  /** 0 = dia, 1 = pôr do sol. Anima suavemente até o alvo; listeners recebem o valor a cada quadro. */
+  dusk = 0;
+  private duskTarget = 0;
+  private duskFrom = 0;
+  private duskStart = 0;
+  private readonly duskListeners: ((t: number) => void)[] = [];
+  private readonly skyCanvas = Object.assign(document.createElement('canvas'), { width: 2, height: 256 });
+  private readonly skyTexture = new THREE.CanvasTexture(this.skyCanvas);
+  private readonly current = { ...palettes.day, top: palettes.day.top.clone(), bottom: palettes.day.bottom.clone(), fog: palettes.day.fog.clone(), sun: palettes.day.sun.clone(), hemiSky: palettes.day.hemiSky.clone(), hemiGround: palettes.day.hemiGround.clone() };
+
+  setMode(mode: LightMode, immediate = false) {
     this.mode = mode;
-    const p = palettes[mode];
-    const canvas = document.createElement('canvas');
-    canvas.width = 2; canvas.height = 256;
-    const ctx = canvas.getContext('2d')!;
+    this.duskTarget = mode === 'sunset' ? 1 : 0;
+    this.duskFrom = this.dusk; this.duskStart = performance.now();
+    if (immediate) { this.dusk = this.duskTarget; this.applyLighting(); }
+  }
+
+  onDusk(fn: (t: number) => void) { this.duskListeners.push(fn); fn(this.dusk); }
+
+  private applyLighting() {
+    const t = this.dusk * this.dusk * (3 - 2 * this.dusk);
+    const a = palettes.day; const b = palettes.sunset; const p = this.current;
+    for (const key of ['top', 'bottom', 'fog', 'sun', 'hemiSky', 'hemiGround'] as const) p[key].copy(a[key]).lerp(b[key], t);
+    for (const key of ['sunIntensity', 'hemiIntensity', 'elevation', 'azimuth', 'exposure', 'fogNear', 'fogFar'] as const) p[key] = a[key] + (b[key] - a[key]) * t;
+    const ctx = this.skyCanvas.getContext('2d')!;
     const gradient = ctx.createLinearGradient(0, 0, 0, 256);
-    gradient.addColorStop(0, p.top); gradient.addColorStop(0.62, p.bottom); gradient.addColorStop(1, p.bottom);
+    gradient.addColorStop(0, `#${p.top.getHexString()}`); gradient.addColorStop(0.62, `#${p.bottom.getHexString()}`); gradient.addColorStop(1, `#${p.bottom.getHexString()}`);
     ctx.fillStyle = gradient; ctx.fillRect(0, 0, 2, 256);
-    const sky = new THREE.CanvasTexture(canvas);
-    sky.colorSpace = THREE.SRGBColorSpace;
-    this.scene.background = sky;
-    this.scene.fog = new THREE.Fog(p.fog, 900, 3200);
-    this.sun.color.setHex(p.sun); this.sun.intensity = p.sunIntensity;
-    this.hemi.color.setHex(p.hemiSky); this.hemi.groundColor.setHex(p.hemiGround); this.hemi.intensity = p.hemiIntensity;
-    const el = THREE.MathUtils.degToRad(p.elevation); const az = THREE.MathUtils.degToRad(p.azimuth);
-    this.sun.position.set(Math.sin(az) * Math.cos(el) * 600, Math.sin(el) * 600, -Math.cos(az) * Math.cos(el) * 600);
+    this.skyTexture.colorSpace = THREE.SRGBColorSpace;
+    this.skyTexture.needsUpdate = true;
+    this.scene.background = this.skyTexture;
+    if (!(this.scene.fog instanceof THREE.Fog)) this.scene.fog = new THREE.Fog(p.fog, p.fogNear, p.fogFar);
+    const fog = this.scene.fog as THREE.Fog; fog.color.copy(p.fog); fog.near = p.fogNear; fog.far = p.fogFar;
+    this.sun.color.copy(p.sun); this.sun.intensity = p.sunIntensity;
+    this.hemi.color.copy(p.hemiSky); this.hemi.groundColor.copy(p.hemiGround); this.hemi.intensity = p.hemiIntensity;
     this.renderer.toneMappingExposure = p.exposure;
+    for (const listener of this.duskListeners) listener(t);
   }
 
   onTick(fn: (dt: number) => void) { this.tickers.push(fn); }
@@ -126,6 +149,12 @@ export class World {
       this.controls.target.lerpVectors(f.fromTarget, f.toTarget, e);
       if (t >= 1) { this.flight = null; f.resolve(); }
     }
+    if (this.dusk !== this.duskTarget) {
+      // Baseado no relógio: a transição dura o mesmo tempo mesmo com poucos quadros por segundo.
+      const progress = Math.min(1, (performance.now() - this.duskStart) / (transitionSeconds * 1000 * Math.max(Math.abs(this.duskTarget - this.duskFrom), 0.05)));
+      this.dusk = progress >= 1 ? this.duskTarget : this.duskFrom + (this.duskTarget - this.duskFrom) * progress;
+      this.applyLighting();
+    }
     for (const tick of this.tickers) tick(dt);
     this.controls.update();
     // A sombra acompanha o alvo para manter resolução boa perto do empreendimento.
@@ -136,8 +165,7 @@ export class World {
   }
 
   private sunOffset() {
-    const p = palettes[this.mode];
-    const el = THREE.MathUtils.degToRad(p.elevation); const az = THREE.MathUtils.degToRad(p.azimuth);
+    const el = THREE.MathUtils.degToRad(this.current.elevation); const az = THREE.MathUtils.degToRad(this.current.azimuth);
     return new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)).multiplyScalar(600);
   }
 

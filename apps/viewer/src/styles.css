@@ -138,7 +138,7 @@ button { font: inherit; cursor: pointer; }
   .actions { top: auto; bottom: 86px; right: 8px; left: 8px; max-width: none; justify-content: center; }
   .actions .btn.card { padding: 10px 11px; font-size: 12px; }
   .hint, .credits .chip { display: none; }
-  .views { flex-direction: row; right: 8px; bottom: 76px; top: auto; }
+  .views { flex-direction: column; right: 8px; top: 76px; bottom: auto; }
   .views span.t { display: none; }
   .panel, .panel.left, .panel.right, .panel.right2 { left: 8px; right: 8px; width: auto; top: auto; bottom: 150px; max-height: 52vh; }
   .crumbs { top: 84px; left: 8px; right: 8px; overflow-x: auto; }

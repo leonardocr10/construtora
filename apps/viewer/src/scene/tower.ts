@@ -25,6 +25,30 @@ function facadeTexture(base: string, columns: number) {
   return texture;
 }
 
+/** Janelas acesas ao entardecer: mapa emissivo da altura inteira, sorteando quais janelas têm luz. */
+function litTexture(columns: number, floors: number, seed: number) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 64 * floors;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  let state = seed;
+  const random = () => { state = (state * 16807) % 2147483647; return state / 2147483647; };
+  const cell = 256 / columns;
+  for (let f = 0; f < floors; f++) {
+    const y = (floors - 1 - f) * 64;
+    for (let col = 0; col < columns; col++) {
+      for (const [x, w] of [[0.16, 0.22], [0.58, 0.26]] as const) {
+        if (random() > 0.42) continue;
+        ctx.fillStyle = random() < 0.7 ? '#ffc76b' : '#ffe3a8';
+        ctx.fillRect(col * cell + x * cell, y + 20, w * cell, 26);
+      }
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 export interface TowerObject {
   building: Building; group: THREE.Group; top: THREE.Vector3; center: THREE.Vector3; height: number;
   unitMeshes: Map<string, THREE.Mesh>; floorBands: THREE.Mesh[];
@@ -32,6 +56,8 @@ export interface TowerObject {
   setFloorHighlight(floor: number | null): void;
   setUnitsVisible(visible: boolean, floor?: number | null): void;
   setSelectedUnit(unitId: string | null): void;
+  /** 0 = dia, 1 = pôr do sol: intensidade das janelas acesas. */
+  setDusk(t: number): void;
 }
 
 /**
@@ -59,7 +85,12 @@ export function buildTower(building: Building): TowerObject {
   const side = facadeTexture(colors.facade, columns / 2); side.repeat.set(1, floors);
   const end = facadeTexture(colors.facade, 2); end.repeat.set(1, floors);
   const plain = new THREE.MeshLambertMaterial({ color: colors.roof });
-  const wingMaterials = [new THREE.MeshLambertMaterial({ map: end }), new THREE.MeshLambertMaterial({ map: end }), plain, plain, new THREE.MeshLambertMaterial({ map: side }), new THREE.MeshLambertMaterial({ map: side })];
+  const seed = [...building.id].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 2147483647, 7) || 7;
+  const litSide = litTexture(columns / 2, floors, seed); const litEnd = litTexture(2, floors, seed + 13);
+  const facade = (map: THREE.Texture, lit: THREE.Texture) => new THREE.MeshLambertMaterial({ map, emissive: 0xffffff, emissiveMap: lit, emissiveIntensity: 0 });
+  const nightMaterials: THREE.MeshLambertMaterial[] = [];
+  const wingMaterials = [facade(end, litEnd), facade(end, litEnd), plain, plain, facade(side, litSide), facade(side, litSide)];
+  nightMaterials.push(...(wingMaterials.filter((m) => m !== plain) as THREE.MeshLambertMaterial[]));
   for (const dir of [-1, 1]) {
     const wing = new THREE.Mesh(new THREE.BoxGeometry(wingW, H, D), wingMaterials);
     wing.position.set(dir * (coreW / 2 + wingW / 2), H / 2, 0);
@@ -155,6 +186,7 @@ export function buildTower(building: Building): TowerObject {
       }
       this.setSelectedUnit(selected);
     },
+    setDusk(t) { for (const material of nightMaterials) material.emissiveIntensity = t * 1.15; },
     setSelectedUnit(unitId) {
       selected = unitId;
       for (const [id, mesh] of unitMeshes) {
