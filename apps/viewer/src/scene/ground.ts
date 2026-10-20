@@ -194,7 +194,9 @@ function absorbParkingPads(classes: Uint8Array, art: Uint8Array, w: number, h: n
         else if (classes[j] !== Ground.Outside) { border++; if (classes[j] === Ground.Asphalt) asphaltBorder++; }
       }
     }
-    if (pixels.length >= minPixels && warm / pixels.length > 0.03 && asphaltBorder / Math.max(1, border) > 0.35) for (const i of pixels) classes[i] = Ground.Asphalt;
+    // Faixa de vaga é traço fino (pouco laranja na área); areia, deque ou quadra laranja ocupam boa parte e são lazer.
+    const warmShare = warm / pixels.length;
+    if (pixels.length >= minPixels && warmShare > 0.03 && warmShare < 0.18 && asphaltBorder / Math.max(1, border) > 0.35) for (const i of pixels) classes[i] = Ground.Asphalt;
   }
 }
 
@@ -486,6 +488,76 @@ export function settleStalls(map: GroundMap, stalls: Stall[], metersPerPixel: nu
     }
     const area = pixels.length * m2; const span = Math.max(maxX - minX + 1, maxY - minY + 1) / m; const ratio = asphalt / Math.max(1, border);
     if (area < 6 && ratio > 0.5 || area < 45 && span < 7 && ratio > 0.7) for (const i of pixels) classes[i] = Ground.Asphalt;
+  }
+
+  const fixed = (i: number) => mask[i * 4 + 3] > 127 || map.plaza?.[i] === 1;
+  // Copa e sombra de árvore desenhadas sobre o gramado saem como "asfalto" (cinza-escuro de pouca saturação):
+  // mancha de asfalto sem vaga, cercada sobretudo de grama ou piso, volta a ser a classe em volta.
+  seen.fill(0);
+  for (let start = 0; start < w * h; start++) {
+    if (seen[start] || classes[start] !== Ground.Asphalt) continue;
+    stack.push(start); seen[start] = 1; pixels.length = 0;
+    let stall = false; const votes = [0, 0, 0, 0, 0];
+    while (stack.length) {
+      const i = stack.pop()!; pixels.push(i); if (fixed(i)) stall = true; const x = i % w;
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
+        if (j < 0 || j >= w * h) continue;
+        if (classes[j] === Ground.Asphalt) { if (!seen[j]) { seen[j] = 1; stack.push(j); } }
+        else if (classes[j] !== Ground.Outside) votes[classes[j]]++;
+      }
+    }
+    const border = votes[Ground.Grass] + votes[Ground.Paving] + votes[Ground.Other];
+    if (stall || !border || pixels.length * m2 > 500) continue;
+    const best = votes[Ground.Grass] >= votes[Ground.Paving] && votes[Ground.Grass] >= votes[Ground.Other] ? Ground.Grass : votes[Ground.Paving] >= votes[Ground.Other] ? Ground.Paving : Ground.Other;
+    // Ilha de verdade (a borda inteira é chão elevado); rua do lote encosta em asfalto e fica.
+    if (votes[Ground.Asphalt] === 0) for (const i of pixels) classes[i] = best;
+  }
+
+  // Abertura morfológica do asfalto (~0,9 m): pontas estreitas que entram no gramado (sombra de copa encostada no
+  // estacionamento) viram a classe elevada vizinha. Corredores e vagas têm mais de 2 m e ficam.
+  const open = Math.max(1, Math.round(0.9 / metersPerPixel));
+  const isAsphalt = (i: number) => classes[i] === Ground.Asphalt || fixed(i);
+  const run = (src: Uint8Array, horizontal: boolean, keep: (count: number, size: number) => boolean) => {
+    const out = new Uint8Array(w * h);
+    for (let line = 0; line < (horizontal ? h : w); line++) {
+      const length = horizontal ? w : h; const at = (k: number) => (horizontal ? line * w + k : k * w + line);
+      let count = 0;
+      for (let k = -open; k < length; k++) {
+        if (k + open < length) count += src[at(k + open)];
+        if (k - open - 1 >= 0) count -= src[at(k - open - 1)];
+        if (k >= 0) { const size = Math.min(length - 1, k + open) - Math.max(0, k - open) + 1; out[at(k)] = keep(count, size) ? 1 : 0; }
+      }
+    }
+    return out;
+  };
+  const base = new Uint8Array(w * h); for (let i = 0; i < w * h; i++) base[i] = isAsphalt(i) ? 1 : 0;
+  const eroded = run(run(base, true, (c, s) => c === s), false, (c, s) => c === s);
+  const opened = run(run(eroded, true, (c) => c > 0), false, (c) => c > 0);
+  for (let i = 0; i < w * h; i++) {
+    if (!base[i] || opened[i] || fixed(i)) continue;
+    const x = i % w; const y = (i - x) / w; let raised = Ground.Grass;
+    search: for (let r = 1; r < 16; r++) for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r]]) {
+      const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const k = classes[ny * w + nx]; if (k === Ground.Grass || k === Ground.Paving || k === Ground.Other) { raised = k; break search; }
+    }
+    classes[i] = raised;
+  }
+
+  // Bordas mais limpas: voto de maioria numa janela de ~0,8 m, duas vezes, sem mexer nas vagas nem na calçada das torres.
+  const radius = Math.max(1, Math.round(0.4 / metersPerPixel));
+  for (let pass = 0; pass < 2; pass++) {
+    const next = new Uint8Array(classes);
+    for (let y = radius; y < h - radius; y++) for (let x = radius; x < w - radius; x++) {
+      const i = y * w + x; const c = classes[i];
+      if (c === Ground.Outside || fixed(i)) continue;
+      const votes = [0, 0, 0, 0, 0];
+      for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) votes[classes[i + dy * w + dx]]++;
+      if (votes[Ground.Outside]) continue; // não mexe na divisa do lote
+      let best = c;
+      for (const k of [Ground.Asphalt, Ground.Grass, Ground.Paving, Ground.Other]) if (votes[k] > votes[best]) best = k;
+      next[i] = best;
+    }
+    classes.set(next);
   }
 }
 /** Superfície elevada (calçada, canteiro, gramado, deck): tudo que não é asfalto. */
