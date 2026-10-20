@@ -78,12 +78,32 @@ node scripts/import/union-vista.mjs C:/temp/union-vista demo@vistahub.local
 - Preços não constam no material e não são exibidos (`publicLayout.showPrices = false`).
 - Centro e rotação calibrados casando a Alameda dos Mandarins e a Av. Manuel Lúcio da arte com as mesmas vias no OSM.
 
+## Planta 3D mobiliada e passeio interno
+
+Cada planta pode ser vetorizada no painel, em **Plantas e tipologias → Vetorizar planta** (`/empreendimentos/:id/plantas/:planId/vetorizar`). O editor desenha sobre a imagem da planta:
+
+- **Escala**: clique nas duas pontas de uma cota impressa e informe a medida real; o desenho já feito é reescalado junto.
+- **Parede**: cliques encadeados, com encaixe nas pontas existentes (20 cm) e trava em 0°/90°. Duplo clique ou Esc encerra.
+- **Porta, janela e porta de correr**: clique sobre uma parede; largura, posição e peitoril são editados no painel lateral.
+- **Cômodo**: clique nos cantos e feche no primeiro ponto. O tipo (sala, quarto, suíte, cozinha, banheiro, varanda, serviço, circulação, garden) é sugerido pelo nome e define o mobiliário. **Criar paredes no contorno** gera as paredes que faltam.
+- Selecionar, arrastar as pontas da parede, Delete, Ctrl+Z, roda para zoom e botão direito para mover.
+
+A planta fica em `FloorPlan.layout` (JSON em metros, origem no canto superior esquerdo da imagem), gravada por `PUT /api/v1/floor-plans/:id/layout` e validada por `parsePlanLayout` (`apps/api/src/structure/plan-layout.ts`). O endpoint público devolve o `layout` de cada planta.
+
+No visualizador, os apartamentos cuja planta tem `layout` mostram **Planta 3D mobiliada e passeio** (também no modal da planta). A cena (`apps/viewer/src/scene/interior.ts`) é gerada na hora:
+
+- paredes com os vãos de portas (folha aberta) e janelas (peitoril, verga e vidro), piso por tipo de cômodo (madeira, porcelanato, cerâmica, grama);
+- mobiliário ilustrativo distribuído automaticamente junto às paredes livres, sem bloquear portas nem pôr móveis altos na frente de janelas;
+- **Maquete**: vista orbital de cima, com as paredes cortadas a 1,10 m;
+- **Passeio**: primeira pessoa com teto, arrastar para olhar, WASD/setas (ou o direcional na tela) para andar, colisão com as paredes exceto pelas portas, e botões para ir a cada cômodo (o ponto de vista é o de maior profundidade no ambiente).
+
+Plantas do Union Vista: `node scripts/import/union-vista-plantas-3d.mjs` (depois de `npm run build`) grava as plantas 01 e 02 tracejadas sobre o e-book e calibradas pelas cotas impressas. As versões garden usam a mesma planta, sem o garden.
+
 ## Licença dos dados do mapa
 
 Os dados do OpenStreetMap são livres sob a licença ODbL. O crédito "© colaboradores do OpenStreetMap" com link para https://www.openstreetmap.org/copyright precisa ficar visível no visualizador, e já está. As consultas ao Overpass ficam em cache, para respeitar a política de uso do serviço.
 
 ## Próximas fases
 
-- Planta 3D mobiliada e tour interno (exige vetorizar a planta: paredes, portas e janelas).
 - Extração automática do e-book por IA (torres, pavimentos, finais e plantas) e editor visual da implantação no painel.
 - Login só com e-mail e senha e as telas do painel SaaS.

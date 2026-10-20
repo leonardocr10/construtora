@@ -1,5 +1,4 @@
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, OnDestroy, computed, inject, input, signal, viewChild } from '@angular/core';
-import { DecimalPipe } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { ApiService, errorMessage } from '../core/api.service';
 import { DevelopmentContext } from '../core/development-context';
@@ -27,7 +26,7 @@ const uid = (prefix: string) => `${prefix}${Date.now().toString(36)}${Math.rando
 const emptyLayout = (): PlanLayout => ({ version: 1, wallHeight: 2.6, walls: [], openings: [], rooms: [] });
 
 @Component({
-  imports: [RouterLink, DecimalPipe],
+  imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styles: [`
     .editor{display:grid;grid-template-columns:150px minmax(0,1fr) 280px;gap:14px;align-items:start}
@@ -62,7 +61,7 @@ const emptyLayout = (): PlanLayout => ({ version: 1, wallHeight: 2.6, walls: [],
         <div class="card shadow"><div class="pad tools">
           @for (t of tools; track t.id) { <button class="btn" [class.on]="tool() === t.id" (click)="setTool(t.id)">{{ t.icon }} {{ t.label }}</button> }
           <div class="divider"></div>
-          <div class="small">Escala: {{ ppm() | number:'1.0-1' }} px/m</div>
+          <div class="small">Escala: {{ fmt(ppm(), 0) }} px/m</div>
           <div class="small">{{ layout().walls.length }} paredes · {{ layout().openings.length }} aberturas · {{ layout().rooms.length }} cômodos</div>
         </div></div>
 
@@ -97,14 +96,14 @@ const emptyLayout = (): PlanLayout => ({ version: 1, wallHeight: 2.6, walls: [],
         <div class="card shadow"><div class="pad">
           @if (tool() === 'scale' && draft().length === 2) {
             <h3>Calibrar escala</h3>
-            <p class="small">Medida no desenho: {{ draftLength() | number:'1.2-2' }} m. Informe a medida real dessa cota.</p>
+            <p class="small">Medida no desenho: {{ fmt(draftLength(), 2) }} m. Informe a medida real dessa cota.</p>
             <div class="field"><label>Medida real (m)</label><input class="input" type="number" step="0.01" min="0.1" [value]="scaleInput()" (input)="scaleInput.set(v($event))"></div>
             <button class="btn blue" (click)="applyScale()">Aplicar escala</button>
             <div class="divider"></div>
           }
           @if (selectedWall(); as w) {
             <h3>Parede</h3>
-            <p class="small">Comprimento {{ wallLength(w) | number:'1.2-2' }} m</p>
+            <p class="small">Comprimento {{ fmt(wallLength(w), 2) }} m</p>
             <div class="field"><label>Espessura (m)</label><input class="input" type="number" step="0.01" min="0.05" max="0.6" [value]="w.thickness" (change)="updateWall(w.id, { thickness: num($event, 0.05, 0.6) })"></div>
             <button class="btn" (click)="remove()">Excluir parede</button>
             <div class="divider"></div>
@@ -126,7 +125,7 @@ const emptyLayout = (): PlanLayout => ({ version: 1, wallHeight: 2.6, walls: [],
             <div class="field"><label>Tipo (define o mobiliário)</label><select class="input" [value]="r.kind" (change)="updateRoom(r.id, { kind: $any(v($event)) })">
               @for (k of roomKindList; track k) { <option [value]="k">{{ roomKinds[k].label }}</option> }
             </select></div>
-            <p class="small">Área {{ roomArea(r) | number:'1.2-2' }} m²</p>
+            <p class="small">Área {{ fmt(roomArea(r), 2) }} m²</p>
             <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn soft" (click)="wallsAround(r)">Criar paredes no contorno</button><button class="btn" (click)="remove()">Excluir</button></div>
             <div class="divider"></div>
           }
@@ -136,7 +135,7 @@ const emptyLayout = (): PlanLayout => ({ version: 1, wallHeight: 2.6, walls: [],
           <h3 style="margin-top:6px">Cômodos</h3>
           <ul class="list">
             @for (r of layout().rooms; track r.id) {
-              <li><button [class.on]="isSel('room', r.id)" (click)="select({ type: 'room', id: r.id })"><i [style.background]="roomKinds[r.kind].color"></i>{{ r.name }}<span class="small right">{{ roomArea(r) | number:'1.1-1' }} m²</span></button></li>
+              <li><button [class.on]="isSel('room', r.id)" (click)="select({ type: 'room', id: r.id })"><i [style.background]="roomKinds[r.kind].color"></i>{{ r.name }}<span class="small right">{{ fmt(roomArea(r), 1) }} m²</span></button></li>
             } @empty { <li class="small">Nenhum cômodo. Use a ferramenta Cômodo.</li> }
           </ul>
         </div></div>
@@ -207,6 +206,7 @@ export class FloorPlanEditorPage implements OnDestroy {
 
   v(event: Event) { return val(event); }
   num(event: Event, min: number, max: number) { const n = Number(val(event)); return Math.min(max, Math.max(min, Number.isFinite(n) ? n : min)); }
+  fmt(n: number, digits: number) { return n.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits }); }
   isSel(type: 'wall' | 'opening' | 'room', id: string) { const s = this.selection(); return s?.type === type && s.id === id; }
   wallLength(w: PlanWall) { return dist(w.a, w.b); }
   roomArea(r: PlanRoom) { return polygonArea(r.points); }

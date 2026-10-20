@@ -145,3 +145,31 @@ button { font: inherit; cursor: pointer; }
   .modal-box { grid-template-columns: 1fr; }
   .brand { left: 8px; top: 8px; }
 }
+
+/* Planta 3D mobiliada */
+.interior { position: fixed; inset: 0; z-index: 25; background: #e9ece8; }
+.interior canvas { display: block; touch-action: none; }
+.interior-top { position: absolute; top: 16px; left: 16px; right: 16px; display: flex; gap: 10px; align-items: center; }
+.interior-title { background: var(--card); border-radius: 14px; box-shadow: 0 6px 24px rgba(30, 20, 50, 0.14); padding: 10px 16px; margin-right: auto; }
+.interior-title b { display: block; font-size: 16px; }
+.interior-title small { color: var(--muted); font-size: 12px; }
+.interior-top .group { display: flex; padding: 4px; gap: 2px; }
+.interior-x { width: 42px; height: 42px; border-radius: 50%; border: 0; background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15); font-size: 20px; }
+.interior-rooms { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 4px; padding: 6px; max-width: calc(100vw - 32px); overflow-x: auto; }
+.interior-rooms button { border: 0; background: none; text-align: left; padding: 8px 14px; border-radius: 10px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.interior-rooms button:hover { background: #fdf0e7; }
+.interior-rooms small { display: block; color: var(--muted); font-weight: 400; font-size: 11px; }
+.interior-hint { position: absolute; left: 50%; top: 76px; transform: translateX(-50%); background: rgba(43, 33, 64, 0.82); color: #fff; padding: 8px 16px; border-radius: 10px; font-size: 12px; pointer-events: none; white-space: nowrap; }
+.interior-note { position: absolute; left: 16px; bottom: 84px; margin: 0; font-size: 11px; color: var(--muted); background: rgba(255, 255, 255, 0.75); padding: 4px 8px; border-radius: 6px; }
+.interior-pad { position: absolute; right: 16px; bottom: 84px; display: none; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 44px); gap: 4px; }
+.interior.walking .interior-pad { display: grid; }
+.interior-pad button { border: 0; border-radius: 10px; background: var(--card); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12); font-size: 14px; user-select: none; touch-action: none; }
+.interior-pad [data-k="arrowup"] { grid-column: 2; }
+.interior-pad [data-k="arrowleft"] { grid-column: 1; grid-row: 2; }
+.interior-pad [data-k="arrowdown"] { grid-column: 2; grid-row: 2; }
+.interior-pad [data-k="arrowright"] { grid-column: 3; grid-row: 2; }
+@media (max-width: 760px) {
+  .interior-top { flex-wrap: wrap; left: 8px; right: 8px; top: 8px; }
+  .interior-hint { display: none; }
+  .interior-note { bottom: 76px; left: 8px; right: 130px; }
+}

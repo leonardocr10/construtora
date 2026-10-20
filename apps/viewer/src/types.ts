@@ -11,7 +11,15 @@ export interface Building {
   floorCount: number | null; unitsPerFloor: number | null; floorHeight: number | null;
   model3d: TowerModel | null; floors: { id: string; name: string; number: number }[]; units: Unit[];
 }
-export interface FloorPlan { id: string; name: string; code: string | null; area: number | null; bedrooms: number | null; suites: number | null; bathrooms: number | null; parkingSpaces: number | null; description: string | null; imageAssetIds: string[] }
+export interface FloorPlan { id: string; name: string; code: string | null; area: number | null; bedrooms: number | null; suites: number | null; bathrooms: number | null; parkingSpaces: number | null; description: string | null; imageAssetIds: string[]; layout: PlanLayout | null }
+/** Planta vetorizada em metros (origem no canto superior esquerdo da imagem; y para baixo). */
+export type RoomKind = 'living' | 'kitchen' | 'bedroom' | 'suite' | 'bathroom' | 'balcony' | 'service' | 'hall' | 'garden';
+export interface PlanLayout {
+  version: 1; wallHeight: number;
+  walls: { id: string; a: Point; b: Point; thickness: number }[];
+  openings: { id: string; wallId: string; offset: number; width: number; kind: 'door' | 'window' | 'sliding'; sill?: number; height?: number }[];
+  rooms: { id: string; name: string; kind: RoomKind; points: Point[] }[];
+}
 export interface Amenity { id: string; name: string; description: string | null; marker: number | null; position: { x: number; z: number } | null; mediaAssetIds: string[] }
 export interface SiteLayout {
   siteImageAssetId?: string; imageWidth: number; imageHeight: number; metersPerPixel: number; origin: Point; azimuth: number;

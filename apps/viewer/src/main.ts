@@ -4,6 +4,7 @@ import { api } from './api';
 import { World } from './scene/world';
 import { buildSite, type SiteResult } from './scene/site';
 import { buildSurroundings } from './scene/surroundings';
+import { InteriorViewer } from './scene/interior';
 import { bindTowerHover } from './scene/hover';
 import type { TowerObject } from './scene/tower';
 import type { Development, FloorPlan, Unit, UnitStatus } from './types';
@@ -286,12 +287,14 @@ function selectUnit(unit: Unit) {
     <div class="unit-actions">
       <button class="btn" id="see-plan" ${plan ? '' : 'disabled'}>▦ Ver planta</button>
       <button class="btn" id="see-view">◉ Ver vista</button>
+      ${plan?.layout ? '<button class="btn" id="see-3d" style="grid-column:1/-1">⬚ Planta 3D mobiliada e passeio</button>' : ''}
       <button class="btn primary" id="interest" style="grid-column:1/-1">${unit.status === 'AVAILABLE' ? 'Tenho interesse neste apartamento' : 'Quero saber de unidades parecidas'}</button>
     </div>`;
   panel.classList.remove('hidden');
   panel.querySelector('.back')!.addEventListener('click', () => back());
   panel.querySelector('#see-plan')!.addEventListener('click', () => plan && showPlan(plan, unit));
   panel.querySelector('#see-view')!.addEventListener('click', () => viewFromUnit(unit));
+  panel.querySelector('#see-3d')?.addEventListener('click', () => plan && openInterior(plan, unit));
   panel.querySelector('#interest')!.addEventListener('click', () => leadForm(unit));
   const mesh = tower.unitMeshes.get(unit.id)!;
   const target = mesh.getWorldPosition(new THREE.Vector3());
@@ -371,7 +374,17 @@ function showPlan(plan: FloorPlan, unit?: Unit) {
     <div class="eyebrow">${esc(summary)}</div>
     <div class="avail" style="margin-top:14px">Área privativa<br><b style="color:var(--ink);font-size:22px">${area(unit?.privateArea ?? plan.area)}</b></div>
     ${parsed.length ? `<h4 style="margin:18px 0 0">Cômodos e cotas</h4><ul class="rooms">${parsed.map(([name, dims]) => `<li><span>${esc(name)}</span><span>${esc(dims)}</span></li>`).join('')}</ul>` : ''}
+    ${plan.layout ? '<button class="btn primary" id="plan-3d" style="margin-top:8px">⬚ Ver em 3D mobiliada</button>' : ''}
     <p class="note">Metragens aproximadas; as oficiais constam no Registro de Incorporação. Mobiliário meramente ilustrativo.</p></div>`, !image);
+  document.getElementById('plan-3d')?.addEventListener('click', () => { closeModal(); openInterior(plan, unit); });
+}
+
+/** Planta 3D mobiliada em tela cheia (maquete e passeio em primeira pessoa). */
+let interior: InteriorViewer | null = null;
+function openInterior(plan: FloorPlan, unit?: Unit) {
+  if (!plan.layout || interior) return;
+  const subtitle = [unit ? `Apartamento ${unit.number}` : null, area(unit?.privateArea ?? plan.area), plan.bedrooms ? `${plan.bedrooms} quartos` : null].filter(Boolean).join(' · ');
+  interior = new InteriorViewer(plan.layout, { title: plan.name, subtitle, onClose: () => { interior = null; } });
 }
 
 function about() {
