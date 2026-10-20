@@ -1,7 +1,9 @@
 import {
   ArcRotateCamera, CascadedShadowGenerator, Color3, Color4, DefaultRenderingPipeline, DirectionalLight, DynamicTexture, HemisphericLight,
-  ImageProcessingConfiguration, Layer, RawCubeTexture, Scene, SSAO2RenderingPipeline, Vector3, type AbstractEngine, type AbstractMesh,
+  ImageProcessingConfiguration, Layer, PBRMaterial, RawCubeTexture, Scene, SSAO2RenderingPipeline, Texture, Vector3, type AbstractEngine, type AbstractMesh,
+  type BaseTexture, type Mesh,
 } from './babylon';
+import type { Library } from './library';
 import { createEngine, gpuName } from './engine';
 import { rgb, toSrgbBytes } from './geometry';
 import { detectQuality, qualityLevels, savedQuality, saveQuality, type QualityLevel } from './quality';
@@ -20,6 +22,8 @@ const palettes: Record<LightMode, Palette> = {
   sunset: { top: rgb('#b3a49d'), bottom: rgb('#e6c49c'), fog: rgb('#dcc0a0'), sun: rgb('#ffae6e'), hemiSky: rgb('#e6cdb6'), hemiGround: rgb('#8f7a69'), sunIntensity: 2.2, hemiIntensity: 1.15 / Math.PI, elevation: 14, azimuth: -72, exposure: 1.0, fogNear: 420, fogFar: 2800 },
 };
 const transitionSeconds = 3.2;
+/** Giro do céu HDR (radianos) para o sol do céu coincidir com a luz direcional (ver build_library.py). */
+const skyRotation = 0;
 /** O ACES do Three multiplica a exposição por 1/0,6 antes da curva; o do Babylon não. */
 const acesExposure = 1 / 0.6;
 const deg = (d: number) => (d * Math.PI) / 180;
@@ -51,6 +55,9 @@ export class World {
   private readonly skyCanvas = Object.assign(document.createElement('canvas'), { width: 2, height: 256 });
   private readonly skyTexture: DynamicTexture;
   mode: LightMode = 'day';
+  /** Biblioteca de assets (céu HDR, texturas, modelos); null sem ela (cena só com geometria gerada aqui). */
+  library: Library | null = null;
+  private hdr: { day: BaseTexture; sunset: BaseTexture; skybox: Mesh } | null = null;
   /** Pausa a renderização (planta 3D aberta por cima). */
   paused = false;
 
@@ -149,7 +156,7 @@ export class World {
     pipeline.samples = q.msaa;
     pipeline.fxaaEnabled = q.fxaa;
     // Brilho suave só nos níveis altos: realça vidros e reflexos do sol sem custo nos aparelhos modestos.
-    pipeline.bloomEnabled = this.quality === 'high' || this.quality === 'ultra';
+    pipeline.bloomEnabled = q.bloom;
     pipeline.bloomThreshold = 0.82; pipeline.bloomWeight = 0.14; pipeline.bloomKernel = 48; pipeline.bloomScale = 0.5;
     pipeline.imageProcessingEnabled = true;
     pipeline.imageProcessing.toneMappingEnabled = true;
@@ -159,6 +166,31 @@ export class World {
     pipeline.imageProcessing.exposure = this.current.exposure * acesExposure;
     this.pipeline = pipeline;
     if (this.scene.prePassRenderer) this.scene.prePassRenderer.samples = q.msaa;
+    if (this.library) { this.library.lowRes = q.lowResTextures; this.library.lodScale = q.lodScale; }
+  }
+
+  /**
+   * Usa a biblioteca: céu HDR físico (Blender) como fundo, reflexos e luz de ambiente, e troca de nível de
+   * detalhe dos modelos instanciados pela distância da câmera.
+   */
+  useLibrary(library: Library) {
+    this.library = library;
+    const q = qualityLevels[this.quality];
+    library.lowRes = q.lowResTextures; library.lodScale = q.lodScale;
+    const day = library.sky('day', q.envSize); const sunset = library.sky('sunset', q.envSize);
+    if (day && sunset) {
+      for (const texture of [day, sunset]) texture.rotationY = skyRotation;
+      const skybox = this.scene.createDefaultSkybox(day, true, 9000, 0, false)!;
+      // infiniteDistance falha com a cena em mão direita (a caixa cobre tudo): a caixa acompanha a câmera.
+      skybox.applyFog = false; skybox.isPickable = false; skybox.infiniteDistance = false;
+      this.scene.onBeforeRenderObservable.add(() => skybox.position.copyFrom(this.camera.position));
+      this.hdr = { day, sunset, skybox };
+      this.sky.dispose();
+      this.applyLighting();
+    }
+    let elapsed = 0;
+    this.onTick((dt) => { elapsed += dt; if (elapsed < 0.25) return; elapsed = 0; library.updateLod(this.camera.position); });
+    library.updateLod(this.camera.position);
   }
 
   /** Lista de projetores de sombra: malhas marcadas com metadata.castShadow (recalculada quando a cena muda). */
@@ -205,6 +237,18 @@ export class World {
     this.sun.direction.set(-Math.sin(az) * Math.cos(el), -Math.sin(el), Math.cos(az) * Math.cos(el));
     this.hemi.diffuse.copyFrom(p.hemiSky); this.hemi.groundColor.copyFrom(p.hemiGround); this.hemi.intensity = p.hemiIntensity;
     this.hemi.specular.set(0, 0, 0);
+    if (this.hdr) {
+      // Com o céu HDR a luz de ambiente vem dele: a hemisférica só completa a sombra.
+      this.hemi.intensity *= 0.3;
+      const env = t > 0.5 ? this.hdr.sunset : this.hdr.day;
+      if (this.scene.environmentTexture !== env) {
+        this.scene.environmentTexture = env;
+        const material = this.hdr.skybox.material as PBRMaterial;
+        const reflection = env.clone()!; reflection.coordinatesMode = Texture.SKYBOX_MODE;
+        material.reflectionTexture?.dispose(); material.reflectionTexture = reflection;
+      }
+      this.scene.environmentIntensity = 0.38 - 0.12 * t;
+    }
     if (this.pipeline) this.pipeline.imageProcessing.exposure = p.exposure * acesExposure;
     for (const listener of this.duskListeners) listener(t);
   }

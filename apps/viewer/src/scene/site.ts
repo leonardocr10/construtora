@@ -1,7 +1,8 @@
-import { DynamicTexture, TransformNode, Vector3, type Scene } from './babylon';
+import { DynamicTexture, PBRMaterial, TransformNode, Vector3, type Scene } from './babylon';
+import type { Library } from './library';
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
-import { buildCars, detectCars } from './lot-relief';
+import { buildCars, detectCars, lotBase } from './lot-relief';
 import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, paintGround, settleStalls, type Footprint, type GroundMap } from './ground';
 import { buildAmenities } from './amenities';
 import { planParking } from './parking';
@@ -130,14 +131,19 @@ function buildWall(scene: Scene, parent: TransformNode, lot: Point[]) {
 export interface SiteResult {
   group: TransformNode; towers: TowerObject[]; lotWorld: Point[];
   amenityAnchors: Map<string, Vector3>; roadAnchors: { name: string; position: Vector3 }[];
+  /** Resolve quando o chão, os carros, a vegetação e os modelos das torres terminaram de carregar. */
+  ready: Promise<void>;
 }
 
 /**
  * Terreno do empreendimento: o lote recebe a própria arte da implantação como textura e as torres
  * paramétricas são erguidas sobre ela. O grupo é girado pelo azimute para casar com o mapa real.
  */
-export function buildSite(scene: Scene, development: Development, siteImageUrl: string | null): SiteResult {
+export function buildSite(scene: Scene, development: Development, siteImageUrl: string | null, library: Library | null = null, towerModels: Map<string, string> = new Map()): SiteResult {
   const layout = development.viewer.layout;
+  // Pronto quando a arte foi processada e os modelos (carros, vegetação, torres) carregaram.
+  let resolveSite!: () => void; const siteLoaded = new Promise<void>((resolve) => (resolveSite = resolve));
+  const readyTasks: Promise<unknown>[] = [];
   const group = new TransformNode('site', scene);
   group.rotation.y = -((layout?.azimuth ?? 0) * Math.PI) / 180;
   group.computeWorldMatrix(true);
@@ -172,27 +178,78 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
         // Áreas de lazer em 3D, a partir do nome e da arte em volta de cada marcador.
         buildAmenities(scene, group, canvas, layout.lot!, development.amenities, layout.metersPerPixel, layout.origin, (p) => pixelToSite(layout, p), asphaltLevel + curbHeight);
         // Um carro em cada vaga ocupada, no centro dela, com a frente para o meio-fio (ou de ré).
-        buildCars(scene, group, parking.stalls.filter((stall) => stall.car).map((stall) => {
+        const cars = parking.stalls.filter((stall) => stall.car).map((stall) => {
           const [x, z] = pixelToSite(layout, [stall.x, stall.y]);
           const nose = (stall.curb || 1) * (stall.car!.reversed ? -1 : 1);
           return { x, z, angle: stall.angle + (nose < 0 ? Math.PI : 0), color: stall.car!.color, kind: stall.car!.kind, seed: stall.x * 7 + stall.y * 13 };
-        }));
+        });
         const meshes = buildGroundMesh(ground, (p) => pixelToSite(layout, p), { u: (px) => (px - ground.x0) / ground.w, v: (py) => 1 - (py - ground.y0) / ground.h });
-        const texture = new DynamicTexture('lot-art', painted.canvas, scene, true);
-        texture.anisotropicFilteringLevel = 16;
-        texture.update(true);
-        groundMaterial.albedoTexture = texture;
-        lotMesh.dispose();
-        lotMesh = shadows(meshFrom('lot', meshes.top, scene, groundMaterial, group), false);
-        shadows(meshFrom('lot-curbs', meshes.side, scene, pbr(scene, 'curb', { color: 0xd4d1c8, roughness: 0.9, doubleSided: true }), group), false);
         const footprints = development.buildings.filter((b) => b.position).map((b) => ({ x: b.position!.x / layout.metersPerPixel + layout.origin[0], y: b.position!.z / layout.metersPerPixel + layout.origin[1], r: Math.hypot(b.model3d?.width ?? 30, b.model3d?.depth ?? 16) / 2 / layout.metersPerPixel + 4 }));
         const trees = detectTrees(canvas, layout.lot!, footprints, layout.metersPerPixel);
         const place = (list: typeof trees) => list.map(([px, py, size]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, size] as [number, number, number]; });
-        if (trees.length) buildTrees(scene, group, place(trees));
         // Palmeiras em fileira nas faixas de grama junto ao muro (paisagismo típico), longe das árvores.
-        const palms = borderPalms(layout.lot!, ground, layout.metersPerPixel, trees);
-        if (palms.length) buildPalms(scene, group, palms.map(([px, py]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, 3] as [number, number, number]; }));
+        const palms = borderPalms(layout.lot!, ground, layout.metersPerPixel, trees).map(([px, py]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, 3] as [number, number, number]; });
+        lotMesh.dispose();
+
+        if (library) {
+          // Chão com materiais PBR da biblioteca (asfalto, grama, piso) e a arte só onde não há classe;
+          // faixas pintadas e linhas das vagas numa camada transparente por cima do asfalto.
+          const art = new DynamicTexture('lot-art', painted.canvas, scene, true);
+          art.anisotropicFilteringLevel = 16; art.update(true);
+          const materials: Record<number, PBRMaterial> = {
+            1: library.material('lot-asphalt', 'asphalt'), 2: library.material('lot-grass', 'grass'), 3: library.material('lot-paving', 'paving'),
+          };
+          const other = pbr(scene, 'lot-other', { color: 0xffffff, roughness: 0.95 }); other.albedoTexture = art;
+          const setOf: Record<number, string> = { 1: 'asphalt', 2: 'grass', 3: 'paving' };
+          const tiled = (geo: Geo, meters: number) => ({ ...geo, uvs: geo.uvs.map((v) => v / meters) });
+          for (const [kind, geo] of meshes.tops) shadows(meshFrom(`lot-${kind}`, setOf[kind] ? tiled(geo, library.tileMeters(setOf[kind])) : geo, scene, materials[kind] ?? other, group), false).freezeWorldMatrix();
+          const marks = new DynamicTexture('lot-marks', paintGround(canvas, ground, layout.metersPerPixel, parking.stalls, true).canvas, scene, true);
+          marks.hasAlpha = true; marks.anisotropicFilteringLevel = 16; marks.update(true);
+          const markMaterial = pbr(scene, 'lot-marks', { color: 0xffffff, roughness: 0.7 });
+          markMaterial.albedoTexture = marks; markMaterial.useAlphaFromAlbedoTexture = true;
+          markMaterial.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHATEST; markMaterial.alphaCutOff = 0.4;
+          markMaterial.zOffset = -2; // fica por cima do asfalto sem levantar a malha
+          if (meshes.tops.has(1)) {
+            const overlay = meshFrom('lot-marks', { ...meshes.tops.get(1)!, uvs: artUv(meshes.tops.get(1)!, ground, layout) }, scene, markMaterial, group);
+            shadows(overlay, false).isPickable = false;
+          }
+          shadows(meshFrom('lot-curbs', tiled(meshes.side, library.tileMeters('concrete')), scene, library.material('curb', 'concrete'), group), false);
+          const tasks: Promise<unknown>[] = [];
+          const carModels = ['car_hatch', 'car_sedan', 'car_suv'];
+          const jitter = (seed: number, k: number) => { const t = Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453; return t - Math.floor(t) - 0.5; };
+          carModels.forEach((model, kind) => {
+            const list = cars.filter((c) => c.kind === kind);
+            if (!list.length || !library.has(model)) return;
+            tasks.push(library.instances(model, list.map((c) => ({
+              // Pequenos desvios dentro da vaga, como no estacionamento de verdade.
+              matrix: compose(c.x + jitter(c.seed, 2) * 0.25, lotBase, c.z + jitter(c.seed, 3) * 0.15, 0, -(c.angle + jitter(c.seed, 1) * 0.05), 0),
+              color: c.color,
+            })), { parent: group, chunk: 40, lodDistance: 140, cull: 900, tint: (name) => name === 'VH_CarPaint' }));
+          });
+          const random = seededRandom(17);
+          if (trees.length) tasks.push(library.instances('tree_broadleaf', place(trees).map(([x, z, size]) => {
+            const s = (size * 1.7) / 6.6 * (0.9 + random() * 0.25);
+            return { matrix: compose(x, asphaltLevel + curbHeight, z, 0, random() * Math.PI * 2, 0, s, s * (0.9 + random() * 0.2), s) };
+          }), { parent: group, chunk: 60, lodDistance: 170, cull: 1600 }));
+          if (palms.length) tasks.push(library.instances('tree_palm', palms.map(([x, z]) => {
+            const s = (8.5 + random() * 2.5) / 9;
+            return { matrix: compose(x, asphaltLevel + curbHeight, z, 0, random() * Math.PI * 2, 0, s, s, s) };
+          }), { parent: group, chunk: 60, lodDistance: 170, cull: 1600 }));
+          readyTasks.push(Promise.all(tasks).catch((error) => console.warn('Modelos da biblioteca indisponíveis', error)));
+        } else {
+          buildCars(scene, group, cars);
+          const texture = new DynamicTexture('lot-art', painted.canvas, scene, true);
+          texture.anisotropicFilteringLevel = 16;
+          texture.update(true);
+          groundMaterial.albedoTexture = texture;
+          lotMesh = shadows(meshFrom('lot', meshes.top, scene, groundMaterial, group), false);
+          shadows(meshFrom('lot-curbs', meshes.side, scene, pbr(scene, 'curb', { color: 0xd4d1c8, roughness: 0.9, doubleSided: true }), group), false);
+          if (trees.length) buildTrees(scene, group, place(trees));
+          if (palms.length) buildPalms(scene, group, palms);
+        }
+        resolveSite();
       };
+      image.onerror = () => resolveSite();
       image.src = siteImageUrl;
     }
     // Meio-fio em volta do lote.
@@ -200,7 +257,9 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
     buildWall(scene, group, lot);
   }
 
-  const towers = development.buildings.map((building) => buildTower(scene, building, group));
+  if (!layout?.lot?.length || !siteImageUrl) resolveSite();
+  const towers = development.buildings.map((building) => buildTower(scene, building, group, towerModels.get(building.id) ?? null, library));
+  for (const tower of towers) readyTasks.push(tower.loaded);
   // Recalcula as âncoras já com a rotação do terreno aplicada.
   for (const tower of towers) {
     const matrix = tower.group.computeWorldMatrix(true);
@@ -219,5 +278,18 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
     const [x, z] = pixelToSite(layout!, mid);
     return { name: road.name, position: toWorld(x, 1.5, z) };
   });
-  return { group, towers, lotWorld, amenityAnchors, roadAnchors };
+  const ready = siteLoaded.then(() => Promise.all(readyTasks)).then(() => undefined);
+  return { group, towers, lotWorld, amenityAnchors, roadAnchors, ready };
 }
+
+/** UV da arte (0–1 no recorte do lote) para uma malha em coordenadas do terreno. */
+function artUv(geo: Geo, ground: GroundMap, layout: SiteLayout) {
+  const uv: number[] = [];
+  for (let i = 0; i < geo.positions.length; i += 3) {
+    const px = geo.positions[i] / layout.metersPerPixel + layout.origin[0]; const py = geo.positions[i + 2] / layout.metersPerPixel + layout.origin[1];
+    uv.push((px - ground.x0) / ground.w, 1 - (py - ground.y0) / ground.h);
+  }
+  return uv;
+}
+
+function seededRandom(seed: number) { return () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }; }

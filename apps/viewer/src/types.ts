@@ -2,7 +2,11 @@ export type UnitStatus = 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'BLOCKED' | 'UNAVAI
 export type Point = [number, number];
 
 export interface UnitSlot { final: string; side: 'front' | 'back'; column: number }
-export interface TowerModel { width: number; depth: number; elevators?: number; colors?: { facade?: string; accent?: string; roof?: string; base?: string }; unitSlots?: UnitSlot[] }
+export interface TowerModel {
+  width: number; depth: number; elevators?: number; colors?: { facade?: string; accent?: string; roof?: string; base?: string }; unitSlots?: UnitSlot[];
+  /** Modelo detalhado gerado no Blender e escolhido para o visualizador (asset público MODEL_3D). */
+  glb?: { assetId: string; version?: number; generatedAt?: string } | null;
+}
 
 export interface Unit { id: string; number: string; final: string | null; floor: number | null; status: UnitStatus; privateArea: number | null; totalArea: number | null; price: number | null; floorPlanId: string | null }
 export interface Building {

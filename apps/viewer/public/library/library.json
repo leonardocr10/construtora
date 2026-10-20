@@ -1,0 +1,247 @@
+{
+  "license": "Gerado proceduralmente pelo VistaHub (scripts/blender/build_library.py); uso livre no projeto, inclusive comercial.",
+  "generator": "scripts/blender/build_library.py",
+  "blender": "5.2.2 LTS",
+  "textures": {
+    "asphalt": {
+      "meters": 4,
+      "metal": 0.0,
+      "files": {
+        "albedo": {
+          "file": "textures/asphalt_albedo.webp",
+          "bytes": 140704
+        },
+        "normal": {
+          "file": "textures/asphalt_normal.webp",
+          "bytes": 634114
+        },
+        "orm": {
+          "file": "textures/asphalt_orm.webp",
+          "bytes": 139668
+        },
+        "albedo_lo": {
+          "file": "textures/asphalt_albedo_lo.webp",
+          "bytes": 13654
+        },
+        "normal_lo": {
+          "file": "textures/asphalt_normal_lo.webp",
+          "bytes": 130638
+        },
+        "orm_lo": {
+          "file": "textures/asphalt_orm_lo.webp",
+          "bytes": 9808
+        }
+      }
+    },
+    "concrete": {
+      "meters": 3,
+      "metal": 0.0,
+      "files": {
+        "albedo": {
+          "file": "textures/concrete_albedo.webp",
+          "bytes": 13702
+        },
+        "normal": {
+          "file": "textures/concrete_normal.webp",
+          "bytes": 468246
+        },
+        "orm": {
+          "file": "textures/concrete_orm.webp",
+          "bytes": 172596
+        },
+        "albedo_lo": {
+          "file": "textures/concrete_albedo_lo.webp",
+          "bytes": 2332
+        },
+        "normal_lo": {
+          "file": "textures/concrete_normal_lo.webp",
+          "bytes": 79156
+        },
+        "orm_lo": {
+          "file": "textures/concrete_orm_lo.webp",
+          "bytes": 16740
+        }
+      }
+    },
+    "paving": {
+      "meters": 4,
+      "metal": 0.0,
+      "files": {
+        "albedo": {
+          "file": "textures/paving_albedo.webp",
+          "bytes": 13104
+        },
+        "normal": {
+          "file": "textures/paving_normal.webp",
+          "bytes": 398232
+        },
+        "orm": {
+          "file": "textures/paving_orm.webp",
+          "bytes": 106964
+        },
+        "albedo_lo": {
+          "file": "textures/paving_albedo_lo.webp",
+          "bytes": 3064
+        },
+        "normal_lo": {
+          "file": "textures/paving_normal_lo.webp",
+          "bytes": 63408
+        },
+        "orm_lo": {
+          "file": "textures/paving_orm_lo.webp",
+          "bytes": 11474
+        }
+      }
+    },
+    "paint": {
+      "meters": 2,
+      "metal": 0.0,
+      "files": {
+        "albedo": {
+          "file": "textures/paint_albedo.webp",
+          "bytes": 3150
+        },
+        "normal": {
+          "file": "textures/paint_normal.webp",
+          "bytes": 500314
+        },
+        "orm": {
+          "file": "textures/paint_orm.webp",
+          "bytes": 181206
+        },
+        "albedo_lo": {
+          "file": "textures/paint_albedo_lo.webp",
+          "bytes": 1006
+        },
+        "normal_lo": {
+          "file": "textures/paint_normal_lo.webp",
+          "bytes": 82788
+        },
+        "orm_lo": {
+          "file": "textures/paint_orm_lo.webp",
+          "bytes": 9242
+        }
+      }
+    },
+    "grass": {
+      "meters": 3,
+      "metal": 0.0,
+      "files": {
+        "albedo": {
+          "file": "textures/grass_albedo.webp",
+          "bytes": 99228
+        },
+        "normal": {
+          "file": "textures/grass_normal.webp",
+          "bytes": 494520
+        },
+        "orm": {
+          "file": "textures/grass_orm.webp",
+          "bytes": 99702
+        },
+        "albedo_lo": {
+          "file": "textures/grass_albedo_lo.webp",
+          "bytes": 19914
+        },
+        "normal_lo": {
+          "file": "textures/grass_normal_lo.webp",
+          "bytes": 105180
+        },
+        "orm_lo": {
+          "file": "textures/grass_orm_lo.webp",
+          "bytes": 13514
+        }
+      }
+    },
+    "metal": {
+      "meters": 1,
+      "metal": 1.0,
+      "files": {
+        "albedo": {
+          "file": "textures/metal_albedo.webp",
+          "bytes": 2726
+        },
+        "normal": {
+          "file": "textures/metal_normal.webp",
+          "bytes": 120176
+        },
+        "orm": {
+          "file": "textures/metal_orm.webp",
+          "bytes": 157956
+        },
+        "albedo_lo": {
+          "file": "textures/metal_albedo_lo.webp",
+          "bytes": 560
+        },
+        "normal_lo": {
+          "file": "textures/metal_normal_lo.webp",
+          "bytes": 3592
+        },
+        "orm_lo": {
+          "file": "textures/metal_orm_lo.webp",
+          "bytes": 14480
+        }
+      }
+    }
+  },
+  "sky": {
+    "day": {
+      "file": "sky/day.hdr",
+      "bytes": 307111,
+      "sunElevation": 42,
+      "sunAzimuth": 35,
+      "centerDirection": "+X"
+    },
+    "sunset": {
+      "file": "sky/sunset.hdr",
+      "bytes": 313287,
+      "sunElevation": 9,
+      "sunAzimuth": -72,
+      "centerDirection": "+X"
+    }
+  },
+  "models": {
+    "tree_broadleaf": {
+      "file": "models/tree_broadleaf.glb",
+      "bytes": 79844,
+      "triangles": 680,
+      "height": 6.6,
+      "crown": 5.2
+    },
+    "tree_palm": {
+      "file": "models/tree_palm.glb",
+      "bytes": 52464,
+      "triangles": 452,
+      "height": 9.0,
+      "crown": 6.0
+    },
+    "shrub": {
+      "file": "models/shrub.glb",
+      "bytes": 26196,
+      "triangles": 164,
+      "height": 1.0,
+      "crown": 1.4
+    },
+    "car_hatch": {
+      "file": "models/car_hatch.glb",
+      "bytes": 240196,
+      "triangles": 6516,
+      "length": 3.94,
+      "width": 1.72
+    },
+    "car_sedan": {
+      "file": "models/car_sedan.glb",
+      "bytes": 240204,
+      "triangles": 6516,
+      "length": 4.47,
+      "width": 1.74
+    },
+    "car_suv": {
+      "file": "models/car_suv.glb",
+      "bytes": 240180,
+      "triangles": 6516,
+      "length": 4.2,
+      "width": 1.79
+    }
+  }
+}

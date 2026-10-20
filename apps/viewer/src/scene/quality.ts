@@ -16,13 +16,17 @@ export interface QualitySettings {
   msaa: number; fxaa: boolean;
   /** Limite da densidade de pixels (1 = resolução CSS; 2 = telas retina inteiras). */
   maxPixelRatio: number;
+  /** Texturas da biblioteca em 512 px (true) ou 1024 px; escala das distâncias de nível de detalhe. */
+  lowResTextures: boolean; lodScale: number;
+  /** Brilho suave (bloom) e resolução do céu HDR pré-filtrado. */
+  bloom: boolean; envSize: number;
 }
 
 export const qualityLevels: Record<QualityLevel, QualitySettings> = {
-  eco: { label: 'Econômico', shadowMapSize: 1024, cascades: 2, shadowFiltering: 0, ssao: null, msaa: 1, fxaa: true, maxPixelRatio: 1 },
-  balanced: { label: 'Equilibrado', shadowMapSize: 2048, cascades: 3, shadowFiltering: 1, ssao: { ratio: 0.5, samples: 8 }, msaa: 2, fxaa: false, maxPixelRatio: 1.25 },
-  high: { label: 'Alto', shadowMapSize: 2048, cascades: 4, shadowFiltering: 2, ssao: { ratio: 0.75, samples: 16 }, msaa: 4, fxaa: false, maxPixelRatio: 1.5 },
-  ultra: { label: 'Ultra', shadowMapSize: 4096, cascades: 4, shadowFiltering: 2, ssao: { ratio: 1, samples: 32 }, msaa: 4, fxaa: true, maxPixelRatio: 2 },
+  eco: { label: 'Baixa', shadowMapSize: 1024, cascades: 2, shadowFiltering: 0, ssao: null, msaa: 1, fxaa: true, maxPixelRatio: 1, lowResTextures: true, lodScale: 0.45, bloom: false, envSize: 128 },
+  balanced: { label: 'Média', shadowMapSize: 2048, cascades: 3, shadowFiltering: 1, ssao: { ratio: 0.5, samples: 8 }, msaa: 2, fxaa: false, maxPixelRatio: 1.25, lowResTextures: true, lodScale: 0.7, bloom: false, envSize: 128 },
+  high: { label: 'Alta', shadowMapSize: 2048, cascades: 4, shadowFiltering: 2, ssao: { ratio: 0.75, samples: 16 }, msaa: 4, fxaa: false, maxPixelRatio: 1.5, lowResTextures: false, lodScale: 1, bloom: true, envSize: 256 },
+  ultra: { label: 'Ultra', shadowMapSize: 4096, cascades: 4, shadowFiltering: 2, ssao: { ratio: 1, samples: 32 }, msaa: 4, fxaa: true, maxPixelRatio: 2, lowResTextures: false, lodScale: 1.6, bloom: true, envSize: 256 },
 };
 export const qualityOrder: QualityLevel[] = ['eco', 'balanced', 'high', 'ultra'];
 

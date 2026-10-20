@@ -2,6 +2,7 @@ import './styles.css';
 import { api } from './api';
 import { Vector3, type AbstractMesh } from './scene/babylon';
 import { World } from './scene/world';
+import { Library } from './scene/library';
 import { buildSite, type SiteResult } from './scene/site';
 import { buildSurroundings } from './scene/surroundings';
 import { InteriorViewer } from './scene/interior';
@@ -47,8 +48,12 @@ async function start() {
   if (dev.theme?.secondaryColor) document.documentElement.style.setProperty('--dark', dev.theme.secondaryColor);
 
   world = await World.create($('stage'), $('labels'));
+  // Biblioteca do Blender (céu HDR, texturas PBR, vegetação e carros); sem ela, a cena usa a geometria gerada aqui.
+  const library = await Library.load(world.scene);
+  if (library) world.useLibrary(library);
   const siteImage = dev.viewer.layout?.siteImageAssetId ? api.assetUrl(dev.viewer.layout.siteImageAssetId) : null;
-  site = buildSite(world.scene, dev, siteImage);
+  const towerModels = new Map(dev.buildings.filter((b) => b.model3d?.glb?.assetId).map((b) => [b.id, api.assetUrl(b.model3d!.glb!.assetId)] as const));
+  site = buildSite(world.scene, dev, siteImage, library, towerModels);
   world.onDusk((t) => { for (const tower of site.towers) tower.setDusk(t); });
   world.onInteract(() => { touring = false; });
 
@@ -57,7 +62,8 @@ async function start() {
   bindPicking();
   hover = bindTowerHover(world, site.towers, () => state.tower);
   bindCompass();
-  if (import.meta.env.DEV) Object.assign(window, { __vista: { world, site } }); // inspeção no navegador durante o desenvolvimento
+  const inspect: { world: World; site: SiteResult; readyAt?: number } = { world, site };
+  if (import.meta.env.DEV) Object.assign(window, { __vista: inspect }); // inspeção no navegador durante o desenvolvimento
   overview(0.01);
 
   $('loading-text').textContent = 'Carregando o entorno real (OpenStreetMap)';
@@ -75,6 +81,9 @@ async function start() {
   } catch {
     $('sources').innerHTML = `Entorno indisponível no momento <em>${renderer}</em>`;
   }
+  await site.ready;
+  // Marca de tempo para as medições de carregamento (scripts/bench/viewer-bench.mjs).
+  inspect.readyAt = performance.now();
   $('loading').style.opacity = '0';
   setTimeout(() => $('loading').remove(), 500);
   if (dev.viewer.lighting?.mode === 'sunset') setMode('sunset');

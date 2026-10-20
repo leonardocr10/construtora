@@ -29,6 +29,10 @@ export { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPi
 export { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline';
 export { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 export { Vector3, Matrix, Quaternion } from '@babylonjs/core/Maths/math.vector';
+export { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader';
+export type { AssetContainer } from '@babylonjs/core/assetContainer';
+export { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture';
+export { Material as MaterialBase } from '@babylonjs/core/Materials/material';
 
 // Efeitos colaterais: instâncias finas, picking, sombras, camadas, pré-passe (SSAO2) e pipelines.
 import '@babylonjs/core/Meshes/thinInstanceMesh';
@@ -41,3 +45,7 @@ import '@babylonjs/core/Rendering/prePassRendererSceneComponent';
 import '@babylonjs/core/Engines/Extensions/engine.multiRender';
 import '@babylonjs/core/Engines/WebGPU/Extensions/engine.multiRender';
 import '@babylonjs/core/PostProcesses/RenderPipeline/postProcessRenderPipelineManagerSceneComponent';
+// Carregador glTF/GLB (modelos do Blender: torres, carros, vegetação) com as extensões (WebP, clearcoat…)
+// e o céu de fundo a partir do HDR.
+import '@babylonjs/loaders/glTF/2.0';
+import '@babylonjs/core/Helpers/sceneHelpers';

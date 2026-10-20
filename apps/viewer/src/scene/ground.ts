@@ -391,13 +391,14 @@ export const pavingTile = (size: number, pxPerMeter: number) => tile(size, (ctx,
  * a arte original (ampliada) no restante, faixas pintadas nítidas por cima.
  * Retorna o canvas e a escala (pixels do canvas por pixel da arte).
  */
-export function paintGround(art: HTMLCanvasElement, map: GroundMap, metersPerPixel: number, stalls: Stall[] = []) {
+export function paintGround(art: HTMLCanvasElement, map: GroundMap, metersPerPixel: number, stalls: Stall[] = [], marksOnly = false) {
   const scale = Math.max(1, Math.min(4, Math.floor(4096 / Math.max(map.w, map.h))));
   const W = map.w * scale; const H = map.h * scale;
   const out = document.createElement('canvas'); out.width = W; out.height = H;
   const ctx = out.getContext('2d')!;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(art, map.x0, map.y0, map.w, map.h, 0, 0, W, H);
+  // marksOnly: só as faixas pintadas e as linhas das vagas, em fundo transparente (camada sobre o asfalto com textura PBR).
+  if (!marksOnly) ctx.drawImage(art, map.x0, map.y0, map.w, map.h, 0, 0, W, H);
 
   const pxPerMeter = scale / metersPerPixel;
   seed = 7;
@@ -413,6 +414,7 @@ export function paintGround(art: HTMLCanvasElement, map: GroundMap, metersPerPix
   const layer = document.createElement('canvas'); layer.width = W; layer.height = H;
   const lctx = layer.getContext('2d')!;
   for (const [kind, fill] of patterns) {
+    if (marksOnly && kind !== 'mark1' && kind !== 'mark2') continue;
     const image = mctx.createImageData(map.w, map.h);
     let any = false;
     for (let i = 0; i < map.classes.length; i++) {
@@ -498,30 +500,44 @@ export function buildGroundMesh(map: GroundMap, toSite: (p: Point) => Point, uvS
   const top: number[] = []; const topUv: number[] = []; const side: number[] = [];
   const level = (c: number) => (raised(c) ? asphaltLevel + curbHeight : asphaltLevel);
   const vertex = (px: number, py: number, y: number, list: number[]) => { const [x, z] = toSite([px + x0, py + y0]); list.push(x, y, z); };
-  const quad = (ax: number, ay: number, bx: number, by: number, y: number) => {
+  // Também por classe (asfalto, grama, piso, outro), com UV em metros para as texturas PBR repetidas;
+  // a classe "outro" mantém a UV da arte (quadra, piscina, deque desenhados).
+  const perClass = new Map<number, { p: number[]; uv: number[] }>();
+  const quad = (ax: number, ay: number, bx: number, by: number, y: number, c: number) => {
     const corners: [number, number][] = [[ax, ay], [ax, by], [bx, ay], [bx, ay], [ax, by], [bx, by]];
-    for (const [px, py] of corners) { vertex(px, py, y, top); topUv.push(uvScale.u(px + x0), uvScale.v(py + y0)); }
+    let list = perClass.get(c); if (!list) perClass.set(c, (list = { p: [], uv: [] }));
+    for (const [px, py] of corners) {
+      vertex(px, py, y, top); topUv.push(uvScale.u(px + x0), uvScale.v(py + y0));
+      const [sx, sz] = toSite([px + x0, py + y0]); list.p.push(sx, y, sz);
+      if (c === Ground.Other) list.uv.push(uvScale.u(px + x0), uvScale.v(py + y0)); else list.uv.push(sx, -sz);
+    }
   };
   // Topo: fusão gulosa de trechos iguais por linha e depois de linhas idênticas consecutivas.
   let previous: string | null = null; let runs: [number, number, number][] = []; let startRow = 0;
-  const flush = (endRow: number) => { for (const [a, b, c] of runs) quad(a, startRow, b, endRow, level(c)); };
+  const flush = (endRow: number) => { for (const [a, b, c] of runs) quad(a, startRow, b, endRow, level(c), c); };
   for (let y = 0; y < h; y++) {
     const row: [number, number, number][] = [];
     let x = 0;
     while (x < w) {
       const c = classes[y * w + x]; let e = x + 1;
-      while (e < w && level(classes[y * w + e]) === level(c) && (classes[y * w + e] === Ground.Outside) === (c === Ground.Outside)) e++;
+      while (e < w && classes[y * w + e] === c) e++;
       if (c !== Ground.Outside) row.push([x, e, c]);
       x = e;
     }
-    const key = row.map(([a, b, c]) => `${a},${b},${level(c)}`).join('|');
+    const key = row.map(([a, b, c]) => `${a},${b},${c}`).join('|');
     if (key !== previous) { if (previous !== null) flush(y); runs = row; startRow = y; previous = key; }
   }
   if (previous !== null) flush(h);
 
   // Meio-fio: faces verticais onde a cota muda (inclusive na borda do lote, até o chão da cidade).
+  const sideUv: number[] = [];
   const wall = (ax: number, ay: number, bx: number, by: number, lo: number, hi: number) => {
-    for (const [px, py, y] of [[ax, ay, lo], [bx, by, lo], [ax, ay, hi], [ax, ay, hi], [bx, by, lo], [bx, by, hi]] as const) vertex(px, py, y, side);
+    const [x1, z1] = toSite([ax + x0, ay + y0]); const [x2, z2] = toSite([bx + x0, by + y0]);
+    const length = Math.hypot(x2 - x1, z2 - z1); const along = (x1 + z1) * 0.5; // continuidade aproximada entre trechos
+    for (const [px, py, y] of [[ax, ay, lo], [bx, by, lo], [ax, ay, hi], [ax, ay, hi], [bx, by, lo], [bx, by, hi]] as const) {
+      vertex(px, py, y, side);
+      sideUv.push(along + (px === bx && py === by ? length : 0), y);
+    }
   };
   const levelAt = (x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h || classes[y * w + x] === Ground.Outside ? 0 : level(classes[y * w + x]));
   for (let y = 0; y <= h; y++) { // divisas horizontais (entre a linha y-1 e y)
@@ -550,6 +566,8 @@ export function buildGroundMesh(map: GroundMap, toSite: (p: Point) => Point, uvS
   // Duas malhas: topo (textura do chão) e faces verticais do meio-fio (concreto).
   const sequence = (n: number) => Array.from({ length: n }, (_, i) => i);
   const topGeo: Geo = computeNormals({ positions: top, indices: sequence(top.length / 3), uvs: topUv });
-  const sideGeo: Geo = computeNormals({ positions: side, indices: sequence(side.length / 3), uvs: new Array((side.length / 3) * 2).fill(0) });
-  return { top: topGeo, side: sideGeo };
+  const sideGeo: Geo = computeNormals({ positions: side, indices: sequence(side.length / 3), uvs: sideUv });
+  const tops = new Map<number, Geo>();
+  for (const [c, list] of perClass) tops.set(c, computeNormals({ positions: list.p, indices: sequence(list.p.length / 3), uvs: list.uv }));
+  return { top: topGeo, side: sideGeo, tops };
 }

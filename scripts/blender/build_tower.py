@@ -29,10 +29,67 @@ import re
 import sys
 
 GENERATOR = "vistahub-build-tower"
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
 
 DEFAULT_COLORS = {"facade": "#e6ebe8", "accent": "#e0622a", "roof": "#d8dbd6", "base": "#c9ccc6"}
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# Fachada (model3d.facade). Os padrões seguem o que os materiais de venda mostram em comum para torres
+# de 2 lâminas com núcleo central (render do e-book: painéis em dois tons, faixa do núcleo na cor de
+# destaque com varandas em balanço, guarda-corpo metálico, janelas quadradas com caixilho claro).
+# Medidas que nenhum material informa ficam listadas em "estimated" e podem ser corrigidas no painel.
+DEFAULT_FACADE = {
+    "tones": None,                 # [tom externo, tom interno]; None = cor da fachada e um cinza-claro
+    "frame": "#eceeee",            # caixilho
+    "glass": "#2f3a44",
+    "railing": "#2e3236",
+    "window": {"width": 1.2, "height": 1.0, "sill": 1.05},
+    "smallWindow": 0.6,            # banheiro
+    "balconies": {"enabled": True, "width": 2.3, "projection": 1.2, "fromFloor": 1, "railHeight": 1.1},
+    "floorJoints": True,
+    "estimated": ["window", "smallWindow", "balconies.projection", "frame", "railing"],
+    "source": None,
+}
+
+
+def _merge(base, extra):
+    out = dict(base)
+    for key, value in (extra or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge(out[key], value)
+        elif value is not None:
+            out[key] = value
+    return out
+
+
+def normalize_facade(raw, colors):
+    """Completa e valida model3d.facade. Cores em #rrggbb; medidas em metros dentro de limites plausíveis."""
+    if raw is not None and not isinstance(raw, dict):
+        raise ParamError("model3d.facade deve ser um objeto")
+    f = _merge(DEFAULT_FACADE, raw or {})
+    if not f.get("tones"):
+        f["tones"] = [colors["facade"], lighten_hex(colors["facade"], 0.04)]
+    for key in ("frame", "glass", "railing"):
+        if not isinstance(f[key], str) or not HEX.match(f[key]):
+            raise ParamError(f"facade.{key} deve estar no formato #rrggbb")
+    if not isinstance(f["tones"], list) or not 1 <= len(f["tones"]) <= 4 or not all(isinstance(t, str) and HEX.match(t) for t in f["tones"]):
+        raise ParamError("facade.tones deve ser uma lista de 1 a 4 cores #rrggbb")
+    f["tones"] = [t.lower() for t in f["tones"]]
+    w = f["window"]
+    w["width"] = _number(w.get("width"), "facade.window.width", 0.4, 3.0)
+    w["height"] = _number(w.get("height"), "facade.window.height", 0.4, 2.4)
+    w["sill"] = _number(w.get("sill"), "facade.window.sill", 0.0, 1.6)
+    f["smallWindow"] = _number(f["smallWindow"], "facade.smallWindow", 0.3, 1.2)
+    b = f["balconies"]
+    b["enabled"] = bool(b.get("enabled"))
+    b["width"] = _number(b.get("width"), "facade.balconies.width", 1.0, 6.0)
+    b["projection"] = _number(b.get("projection"), "facade.balconies.projection", 0.3, 3.0)
+    b["fromFloor"] = int(_number(b.get("fromFloor", 1), "facade.balconies.fromFloor", 0, 200))
+    b["railHeight"] = _number(b.get("railHeight", 1.1), "facade.balconies.railHeight", 0.9, 1.4)
+    f["floorJoints"] = bool(f["floorJoints"])
+    if not isinstance(f["estimated"], list):
+        raise ParamError("facade.estimated deve ser uma lista")
+    return f
 
 
 class ParamError(ValueError):
@@ -113,7 +170,10 @@ def normalize(raw):
                 raise ParamError(f"Cor {key} deve estar no formato #rrggbb (recebido: {value!r})")
             colors[key] = value.lower()
 
+    facade = normalize_facade(pick("facade"), colors)
+
     return {
+        "facade": facade,
         "code": code,
         "name": str(raw.get("name") or f"Torre {code}")[:120],
         "width": width,
@@ -164,6 +224,7 @@ class MeshData:
         self.verts = []
         self.faces = []
         self.mat = []
+        self.uvs = []
 
     def quad(self, a, b, c, d, normal, mat=0):
         # Ordena o contorno para a normal apontar para `normal` (sentido anti-horário visto de fora).
@@ -177,6 +238,15 @@ class MeshData:
         self.verts.extend(pts)
         self.faces.append((base, base + 1, base + 2, base + 3))
         self.mat.append(mat)
+        # UV planar em metros pelo eixo dominante da normal (texturas repetidas: reboco, concreto, metal).
+        ax = max(range(3), key=lambda k: abs(normal[k]))
+        for p in pts:
+            if ax == 1:
+                self.uvs.append((p[0] / UV_METERS, p[2] / UV_METERS))
+            elif ax == 0:
+                self.uvs.append((p[2] / UV_METERS, p[1] / UV_METERS))
+            else:
+                self.uvs.append((p[0] / UV_METERS, p[1] / UV_METERS))
 
     def box(self, cx, cy, cz, sx, sy, sz, mat=0, top_mat=None, bottom=True):
         x0, x1 = cx - sx / 2, cx + sx / 2
@@ -273,6 +343,7 @@ def _rng(seed_text):
 PANEL_T = 0.14       # espessura dos painéis de fachada (profundidade do vão das janelas)
 GLASS_OUT = 0.05     # plano do vidro, a partir da face da alvenaria (fica 9 cm recuado do painel)
 FRAME_DEPTH = 0.10
+UV_METERS = 2.0      # metros por repetição das texturas (o ladrilho de reboco cobre 2 × 2 m)
 
 
 def build_geometry(p):
@@ -280,76 +351,127 @@ def build_geometry(p):
     W, D, h = p["width"], p["depth"], p["floorHeight"]
     floors = p["floorCount"]
     H = floors * h
+    fac = p["facade"]
     core_w = min(4.2, W * 0.12)
     wing_w = (W - core_w) / 2
     columns = max(s["column"] for s in p["unitSlots"]) + 1
     cells_per_wing = max(1, math.ceil(columns / 2))
     random = _rng(p["seed"])
+    tones = len(fac["tones"])
 
     m = {
         "body": MeshData("body", ["VH_Wall", "VH_Roof"], bevel=0.02),
-        "panels": MeshData("panels", ["VH_PanelA", "VH_PanelB"]),
+        "panels": MeshData("panels", [f"VH_Tone{k}" for k in range(tones)]),
         "trim": MeshData("trim", ["VH_Trim"]),
+        "joints": MeshData("joints", ["VH_Joint"]),
         "frames": MeshData("frames", ["VH_Frame"]),
         "glass": MeshData("glass", ["VH_Glass"]),
         "glass-lit": MeshData("glass-lit", ["VH_GlassLit"]),
         "core": MeshData("core", ["VH_Accent", "VH_CoreVoid"]),
+        "balconies": MeshData("balconies", ["VH_Accent", "VH_Trim"]),
         "rails": MeshData("rails", ["VH_Rail"]),
         "roof-equipment": MeshData("roof-equipment", ["VH_Roof"], bevel=0.03),
         "base": MeshData("base", ["VH_Base"]),
     }
 
-    sill_y = min(0.95, 0.33 * h)
-    win_h = max(0.6, min(1.4, h - sill_y - 0.55))
+    win = fac["window"]
+    win_w, win_h = win["width"], min(win["height"], h - 0.6)
+    sill_y = min(win["sill"], h - win_h - 0.35)
+    small = min(fac["smallWindow"], h - 1.2)
+    bal = fac["balconies"]
+    door_w, door_h = min(bal["width"] - 0.3, 2.0), min(2.2, h - 0.45)
 
-    def facade(face, length, cells):
+    def window(face, wu, wy, ww, wh, lit_chance, holes, items):
+        holes.append((wu - (ww + 0.14) / 2, wu + (ww + 0.14) / 2, wy - (wh + 0.14) / 2, wy + (wh + 0.14) / 2))
+        items.append((wu, wy, ww, wh, 0.07, lit_chance))
+
+    def facade(face, length, cells, tone_of, balcony_cell):
+        """Uma face da lâmina: painel por apartamento (tom por célula), janelas com vão real e caixilho;
+        na célula junto ao núcleo, a porta da varanda e uma janela."""
         cw = length / cells
-        big = min(1.4, cw * 0.27)
         for c in range(cells):
             uc = -length / 2 + cw * (c + 0.5)
-            holes, windows = [], []
+            holes, items = [], []
             for f in range(floors):
                 base = f * h
                 wy = base + sill_y + win_h / 2
-                for k in (0.27, 0.73):
-                    wu = uc - cw / 2 + cw * k
-                    holes.append((wu - (big + 0.14) / 2, wu + (big + 0.14) / 2, wy - (win_h + 0.14) / 2, wy + (win_h + 0.14) / 2))
-                    windows.append((wu, wy, big, win_h, 0.07, True))
-                inner_edge = cw * 0.23 - (big + 0.14) / 2
-                if inner_edge >= 0.36:
-                    by = base + sill_y + win_h * 0.714
-                    holes.append((uc - 0.26, uc + 0.26, by - 0.26, by + 0.26))
-                    windows.append((uc, by, 0.42, 0.42, 0.05, False))
-            face.shell(m["panels"], uc - cw / 2 + 0.04, uc + cw / 2 - 0.04, 0, H, PANEL_T, holes, mat=c % 2)
-            for wu, wy, ww, wh, fw, big_window in windows:
+                with_balcony = bal["enabled"] and c == balcony_cell and f >= bal["fromFloor"]
+                if with_balcony:
+                    # Porta de correr da varanda no lado do núcleo; uma janela no outro lado.
+                    du = uc + (cw / 2 - bal["width"] / 2 - 0.15) * (1 if balcony_cell == cells - 1 else -1)
+                    holes.append((du - (door_w + 0.14) / 2, du + (door_w + 0.14) / 2, base + 0.12, base + 0.12 + door_h + 0.07))
+                    items.append((du, base + 0.12 + door_h / 2, door_w, door_h, 0.07, 0.5))
+                    wu = uc - (du - uc) * 0.9
+                    window(face, wu, wy, win_w, win_h, 0.42, holes, items)
+                else:
+                    for k in (0.27, 0.73):
+                        window(face, uc - cw / 2 + cw * k, wy, win_w, win_h, 0.42, holes, items)
+                    inner = cw * 0.23 - (win_w + 0.14) / 2
+                    if inner >= small / 2 + 0.1:
+                        window(face, uc, base + sill_y + win_h - small / 2, small, small, 0.0, holes, items)
+            face.shell(m["panels"], uc - cw / 2 + 0.04, uc + cw / 2 - 0.04, 0, H, PANEL_T, holes, mat=tone_of(c))
+            for wu, wy, ww, wh, fw, lit in items:
                 ow, oh = ww + 2 * fw, wh + 2 * fw
                 # Caixilho: quatro perfis dentro do vão e montante central na frente do vidro.
                 face.box(m["frames"], wu - ow / 2 + fw / 2, wy, FRAME_DEPTH / 2, fw, oh, FRAME_DEPTH)
                 face.box(m["frames"], wu + ow / 2 - fw / 2, wy, FRAME_DEPTH / 2, fw, oh, FRAME_DEPTH)
                 face.box(m["frames"], wu, wy + oh / 2 - fw / 2, FRAME_DEPTH / 2, ww, fw, FRAME_DEPTH)
                 face.box(m["frames"], wu, wy - oh / 2 + fw / 2, FRAME_DEPTH / 2, ww, fw, FRAME_DEPTH)
-                target = m["glass"]
-                if big_window:
+                if ww >= 0.9:
                     face.box(m["frames"], wu, wy, GLASS_OUT + 0.025, 0.05, wh, 0.05)
+                if wh < 2:
                     # Peitoril: pinga-água saindo além do painel.
                     face.box(m["trim"], wu, wy - oh / 2 - 0.03, (PANEL_T + 0.06) / 2, ow + 0.12, 0.06, PANEL_T + 0.06)
-                    if random() < 0.42:
-                        target = m["glass-lit"]
+                target = m["glass-lit"] if lit and random() < lit else m["glass"]
                 face.rect(target, wu - ww / 2, wu + ww / 2, wy - wh / 2, wy + wh / 2, GLASS_OUT)
+
+    def balconies(face, length, cells, balcony_cell, face_sign):
+        """Varandas em balanço na faixa junto ao núcleo: laje e abas na cor de destaque, guarda-corpo metálico."""
+        if not bal["enabled"]:
+            return
+        cw = length / cells
+        uc = -length / 2 + cw * (balcony_cell + 0.5)
+        du = uc + (cw / 2 - bal["width"] / 2 - 0.15) * (1 if balcony_cell == cells - 1 else -1)
+        bw, pr = bal["width"] + 0.2, bal["projection"]
+        out0 = PANEL_T
+        for f in range(bal["fromFloor"], floors):
+            y = f * h
+            face.box(m["balconies"], du, y + 0.06, out0 + pr / 2, bw, 0.18, pr)                         # laje
+            face.box(m["balconies"], du, y + 0.15 - 0.09, out0 + pr + 0.03, bw + 0.04, 0.3, 0.06, mat=0)  # testeira
+            for side in (-1, 1):
+                face.box(m["balconies"], du + side * (bw / 2 - 0.06), y + h / 2, out0 + pr / 2, 0.12, h, pr)  # abas
+            # Guarda-corpo: corrimão, duas travessas e montantes a cada ~12 cm (barras finas).
+            rh = bal["railHeight"]
+            fz = out0 + pr - 0.04
+            face.box(m["rails"], du, y + 0.15 + rh, fz, bw - 0.24, 0.05, 0.05)
+            face.box(m["rails"], du, y + 0.15 + 0.12, fz, bw - 0.24, 0.04, 0.04)
+            posts = max(4, int((bw - 0.24) / 0.12))
+            for k in range(posts + 1):
+                face.box(m["rails"], du - (bw - 0.24) / 2 + (bw - 0.24) * k / posts, y + 0.15 + rh / 2, fz, 0.02, rh, 0.02)
+        if bal["fromFloor"] < floors:
+            # Fecho da última laje (cobertura das varandas do último pavimento).
+            face.box(m["balconies"], du, H + 0.06, out0 + pr / 2, bw, 0.18, pr)
 
     for d in (-1, 1):
         cx = d * (core_w / 2 + wing_w / 2)
-        # Lâmina: alvenaria (cor da fachada) com a cobertura no material de laje.
+        # Lâmina: alvenaria com a cobertura no material de laje.
         m["body"].box(cx, H / 2, 0, wing_w, H, D, mat=0, top_mat=1, bottom=False)
-        facade(Face(cx, D / 2, 0, 1), wing_w, cells_per_wing)
-        facade(Face(cx, -D / 2, 0, -1), wing_w, cells_per_wing)
-        facade(Face(cx + d * wing_w / 2, 0, d, 0), D, 2)
-        # Frisos de laje a cada pavimento.
-        for f in range(1, floors + 1):
-            y = f * h - 0.08
-            m["trim"].box(cx, y, D / 2 + 0.1, wing_w + 0.34, 0.2, 0.2)
-            m["trim"].box(cx, y, -D / 2 - 0.1, wing_w + 0.34, 0.2, 0.2)
-            m["trim"].box(cx + d * (wing_w / 2 + 0.1), y, 0, 0.2, 0.2, D + 0.34)
+        # Tom 0 nas células das pontas da lâmina e nas empenas; tom 1 nas células junto ao núcleo.
+        outer_cell = 0 if d < 0 else cells_per_wing - 1
+        core_cell = cells_per_wing - 1 if d < 0 else 0
+        tone = lambda c, oc=outer_cell: 0 if (c == oc or tones == 1) else 1 % tones
+        for fz in (1, -1):
+            face = Face(cx, fz * D / 2, 0, fz)
+            facade(face, wing_w, cells_per_wing, tone, core_cell)
+            balconies(face, wing_w, cells_per_wing, core_cell, fz)
+        facade(Face(cx + d * wing_w / 2, 0, d, 0), D, 2, lambda c: 0, -1)
+        if fac["floorJoints"]:
+            # Junta de dilatação entre pavimentos: frisos rasos (2 cm) em volta da lâmina.
+            for f in range(1, floors + 1):
+                y = f * h - 0.02
+                m["joints"].box(cx, y, D / 2 + PANEL_T + 0.01, wing_w + 2 * PANEL_T, 0.035, 0.02)
+                m["joints"].box(cx, y, -D / 2 - PANEL_T - 0.01, wing_w + 2 * PANEL_T, 0.035, 0.02)
+                m["joints"].box(cx + d * (wing_w / 2 + PANEL_T + 0.01), y, 0, 0.02, 0.035, D + 2 * PANEL_T)
         # Platibanda: quatro paredes de 15 cm e rufo por cima.
         ox, oz = wing_w / 2 + 0.15, D / 2 + 0.15
         for sz in (-1, 1):
@@ -413,26 +535,80 @@ def lighten_hex(hex_color, amount):
     return "#" + "".join(f"{round(c * 255):02x}" for c in (r, g, b))
 
 
-def material_specs(colors):
-    """Materiais PBR (cores lineares). Os nomes são estáveis: o visualizador pode localizar materiais por nome."""
-    facade = srgb_to_linear(colors["facade"])
-    sage = srgb_to_linear("#9cb8b0")
+def material_specs(colors, facade=None):
+    """Materiais PBR (cores lineares). Os nomes são estáveis: o visualizador pode localizar materiais por nome.
+    `texture` aponta para um conjunto da biblioteca (scripts/blender/build_library.py): a cor vira fator
+    multiplicado pela textura (reboco pintado, concreto, metal escovado)."""
+    facade = facade or normalize_facade(None, colors)
+    wall = srgb_to_linear(colors["facade"])
     accent = srgb_to_linear(colors["accent"])
-    return {
-        "VH_Wall": {"color": facade, "roughness": 0.9},
-        "VH_Roof": {"color": srgb_to_linear(colors["roof"]), "roughness": 0.95},
-        "VH_PanelA": {"color": facade, "roughness": 0.85},
-        "VH_PanelB": {"color": tuple(a + (b - a) * 0.38 for a, b in zip(facade, sage)), "roughness": 0.85},
-        "VH_Trim": {"color": srgb_to_linear(lighten_hex(colors["facade"], 0.05)), "roughness": 0.8},
-        "VH_Frame": {"color": srgb_to_linear("#5a6168"), "roughness": 0.45, "metallic": 0.6},
-        "VH_Glass": {"color": srgb_to_linear("#3a4b59"), "roughness": 0.05, "metallic": 0.3},
-        "VH_GlassLit": {"color": srgb_to_linear("#3a4b59"), "roughness": 0.05, "metallic": 0.3, "emission": srgb_to_linear("#ffc56a")},
-        "VH_Accent": {"color": accent, "roughness": 0.75},
+    specs = {
+        "VH_Wall": {"color": wall, "roughness": 0.9, "texture": "paint"},
+        "VH_Roof": {"color": srgb_to_linear(colors["roof"]), "roughness": 0.95, "texture": "concrete"},
+        "VH_Trim": {"color": srgb_to_linear(lighten_hex(facade["tones"][0], 0.05)), "roughness": 0.8, "texture": "paint"},
+        "VH_Joint": {"color": tuple(c * 0.62 for c in srgb_to_linear(facade["tones"][0])), "roughness": 0.9},
+        "VH_Frame": {"color": srgb_to_linear(facade["frame"]), "roughness": 0.4, "metallic": 0.5, "texture": "metal"},
+        "VH_Glass": {"color": srgb_to_linear(facade["glass"]), "roughness": 0.04, "metallic": 0.35},
+        "VH_GlassLit": {"color": srgb_to_linear(facade["glass"]), "roughness": 0.04, "metallic": 0.35, "emission": srgb_to_linear("#ffc56a")},
+        "VH_Accent": {"color": accent, "roughness": 0.8, "texture": "paint"},
         "VH_CoreVoid": {"color": tuple(c * 0.3 for c in accent), "roughness": 1.0},
-        "VH_Rail": {"color": srgb_to_linear("#2b2f33"), "roughness": 0.4, "metallic": 0.8},
-        "VH_Base": {"color": srgb_to_linear(colors["base"]), "roughness": 1.0},
+        "VH_Rail": {"color": srgb_to_linear(facade["railing"]), "roughness": 0.45, "metallic": 0.85, "texture": "metal"},
+        "VH_Base": {"color": srgb_to_linear(colors["base"]), "roughness": 1.0, "texture": "concrete"},
         "VH_Unit": {"color": srgb_to_linear("#22a565"), "roughness": 1.0, "alpha": 0.35},
     }
+    for k, tone in enumerate(facade["tones"]):
+        specs[f"VH_Tone{k}"] = {"color": srgb_to_linear(tone), "roughness": 0.86, "texture": "paint"}
+    return specs
+
+
+def texture_dir():
+    """Pasta das texturas da biblioteca: VH_TEXTURES ou apps/viewer/public/library/textures do repositório."""
+    import os
+    candidates = [os.environ.get("VH_TEXTURES"), os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "apps", "viewer", "public", "library", "textures")]
+    for path in candidates:
+        if path and os.path.isdir(path):
+            return os.path.abspath(path)
+    return None
+
+
+def _texture_nodes(mat, bsdf, base_color, folder, name):
+    """Albedo × cor (Mix multiplicar), normal (mapa de normal) e rugosidade/metal do ORM; versão de 512 px."""
+    import os
+    import bpy
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+
+    def image(kind, color):
+        path = os.path.join(folder, f"{name}_{kind}_lo.webp")
+        if not os.path.exists(path):
+            return None
+        img = bpy.data.images.load(path, check_existing=True)
+        img.colorspace_settings.name = "sRGB" if color else "Non-Color"
+        node = nodes.new("ShaderNodeTexImage")
+        node.image = img
+        return node
+
+    albedo = image("albedo", True)
+    if albedo is not None:
+        mix = nodes.new("ShaderNodeMix")
+        mix.data_type = "RGBA"
+        mix.blend_type = "MULTIPLY"
+        mix.inputs["Factor"].default_value = 1.0
+        links.new(albedo.outputs["Color"], mix.inputs["A"])
+        mix.inputs["B"].default_value = (*base_color, 1.0)
+        links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
+    # Sem mapa de normal: na fachada o relevo do reboco é imperceptível e, sem tangentes, a UV planar
+    # espelhada gera manchas; com tangentes o shader passa do limite de variáveis do WebGPU.
+    normal = None
+    if normal is not None:
+        nmap = nodes.new("ShaderNodeNormalMap")
+        links.new(normal.outputs["Color"], nmap.inputs["Color"])
+        links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
+    orm = image("orm", False)
+    if orm is not None:
+        sep = nodes.new("ShaderNodeSeparateColor")
+        links.new(orm.outputs["Color"], sep.inputs["Color"])
+        links.new(sep.outputs["Green"], bsdf.inputs["Roughness"])
+        links.new(sep.outputs["Blue"], bsdf.inputs["Metallic"])
 
 
 def _to_blender(v):
@@ -450,7 +626,8 @@ def build_scene(p):
     scene.unit_settings.scale_length = 1.0
 
     materials = {}
-    for name, spec in material_specs(p["colors"]).items():
+    textures = texture_dir()
+    for name, spec in material_specs(p["colors"], p["facade"]).items():
         mat = bpy.data.materials.new(name)
         if mat.node_tree is None:
             mat.use_nodes = True
@@ -473,6 +650,8 @@ def build_scene(p):
             if hasattr(mat, "surface_render_method"):
                 mat.surface_render_method = "BLENDED"
         mat.diffuse_color = (*spec["color"], spec.get("alpha", 1.0))
+        if textures and spec.get("texture"):
+            _texture_nodes(mat, bsdf, spec["color"], textures, spec["texture"])
         materials[name] = mat
 
     code = p["code"]
@@ -492,7 +671,7 @@ def build_scene(p):
     root["vh_generator"] = GENERATOR
     root["vh_generator_version"] = GENERATOR_VERSION
     root["vh_role"] = "tower"
-    root["vh_params"] = json.dumps({k: p[k] for k in ("code", "name", "width", "depth", "floorCount", "floorHeight", "floors", "unitSlots", "colors")}, ensure_ascii=False)
+    root["vh_params"] = json.dumps({k: p[k] for k in ("code", "name", "width", "depth", "floorCount", "floorHeight", "floors", "unitSlots", "colors", "facade")}, ensure_ascii=False)
     visual_root = empty(f"T{code}-visual", visual, root)
     units_root = empty(f"T{code}-units", units, root)
     visual_root["vh_role"] = "visual"
@@ -506,6 +685,12 @@ def build_scene(p):
         mesh = bpy.data.meshes.new(name)
         mesh.from_pydata([_to_blender(v) for v in data.verts], [], data.faces)
         mesh.polygons.foreach_set("material_index", data.mat)
+        if data.uvs:
+            # Cada quad tem os próprios vértices: a UV do laço é a do vértice (antes de fundir os repetidos).
+            layer = mesh.uv_layers.new(name="UVMap")
+            loop_vert = [0] * len(mesh.loops)
+            mesh.loops.foreach_get("vertex_index", loop_vert)
+            layer.data.foreach_set("uv", [c for vi in loop_vert for c in data.uvs[vi]])
         for mat_name in data.materials:
             mesh.materials.append(materials[mat_name])
         # Funde vértices coincidentes (painéis vizinhos, vãos) para a malha ficar contínua.
@@ -567,6 +752,8 @@ def export_glb(path):
         "export_cameras": False,
         "export_lights": False,
         "export_materials": "EXPORT",
+        "export_image_format": "WEBP",
+        "export_image_quality": 88,
         "use_selection": False,
         "use_visible": False,
     }

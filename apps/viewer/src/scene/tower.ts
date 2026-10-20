@@ -1,4 +1,5 @@
-import { Color3, Mesh, TransformNode, Vector3, type Matrix, type PBRMaterial, type Scene } from './babylon';
+import { Color3, LoadAssetContainerAsync, Mesh, TransformNode, Vector3, type Matrix, type PBRMaterial, type Scene } from './babylon';
+import type { Library } from './library';
 import { box as boxGeo, compose, instanced, meshFrom, offsetLightness, pbr, rgb, shadows, translate } from './geometry';
 import type { Building, TowerModel, UnitSlot, UnitStatus } from '../types';
 
@@ -19,13 +20,15 @@ export interface TowerObject {
   setHover(on: boolean): void;
   /** Ponto (mundo) no topo do volume de um apartamento, para o rótulo com o número. */
   unitTop(unitId: string): Vector3 | null;
+  /** Resolve quando o modelo GLB da torre (se houver) terminou de carregar. */
+  loaded: Promise<void>;
 }
 
 /**
  * Torre paramétrica: corpo com janelas por pavimento, núcleo de circulação e varandas na cor de destaque,
  * e um volume clicável por apartamento (posição definida pelo final em model3d.unitSlots).
  */
-export function buildTower(scene: Scene, building: Building, parent: TransformNode): TowerObject {
+export function buildTower(scene: Scene, building: Building, parent: TransformNode, glbUrl: string | null = null, library: Library | null = null): TowerObject {
   const model: TowerModel = building.model3d ?? { width: 32, depth: 16 };
   const floors = building.floorCount ?? (Math.max(...building.units.map((u) => u.floor ?? 0), 0) + 1);
   const h = building.floorHeight ?? 2.9;
@@ -192,14 +195,38 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
   const world = group.getWorldMatrix();
   const center = Vector3.TransformCoordinates(new Vector3(0, H / 2, 0), world);
   const top = Vector3.TransformCoordinates(new Vector3(0, H + 6, 0), world);
-  let selected: string | null = null; let unitsFloor: number | null | undefined;
+  let selected: string | null = null; let unitsFloor: number | null | undefined; let dusk = 0;
   // Materiais do corpo que recebem o realce de hover (cor original guardada para voltar).
   const hoverTint = rgb(0xff8a3d);
   const tintable = new Map<PBRMaterial, Color3>();
   for (const material of [wall, plain, panelMaterial, trim, accent]) tintable.set(material, material.albedoColor.clone());
+  const litMaterials: PBRMaterial[] = [litMaterial];
+
+  // Modelo detalhado do Blender (scripts/blender/build_tower.py): substitui o corpo paramétrico. Os volumes por
+  // apartamento, as faixas de pavimento, a torre recortada e a caixa de clique continuam os daqui.
+  const loaded = glbUrl ? (async () => {
+    const container = await LoadAssetContainerAsync(glbUrl, scene, { pluginExtension: '.glb' });
+    container.addAllToScene();
+    for (const node of container.transformNodes) if (/-units$/.test(node.name)) node.dispose(false, true);
+    const root = container.rootNodes[0]; if (!root) return;
+    root.parent = group;
+    const visual = root.getChildMeshes(false).filter((m): m is Mesh => m instanceof Mesh && !m.isDisposed() && m.getTotalVertices() > 0);
+    for (const mesh of visual) {
+      shadows(mesh, true); mesh.isPickable = false;
+      const material = mesh.material as PBRMaterial | null; if (!material) continue;
+      material.maxSimultaneousLights = 4;
+      if (material.name === 'VH_GlassLit') { material.emissiveColor = rgb(0xffc56a); material.emissiveIntensity = dusk * 1.6; if (!litMaterials.includes(material)) litMaterials.push(material); }
+      if (/^VH_(Tone|Wall|Accent|Trim|Roof)/.test(material.name) && !tintable.has(material)) tintable.set(material, material.albedoColor.clone());
+      if (/^VH_Glass/.test(material.name)) material.environmentIntensity = 1.4; // vidro reflete o céu
+    }
+    for (const mesh of body) mesh.dispose();
+    body.length = 0; body.push(...visual);
+    const showing = unitsFloor;
+    if (showing != null) for (const mesh of body) mesh.setEnabled(false);
+  })().catch((error) => console.warn(`Modelo 3D da torre ${building.name} indisponível; usando o paramétrico`, error)) : Promise.resolve();
 
   return {
-    building, group, top, center, height: H, unitMeshes, floorBands, pickables: [hit, ...unitMeshes.values()],
+    building, group, top, center, height: H, unitMeshes, floorBands, pickables: [hit, ...unitMeshes.values()], loaded,
     setFloorHighlight(floor) { floorBands.forEach((band, i) => band.setEnabled(i === floor)); },
     setUnitsVisible(visible, floor) {
       unitsFloor = visible ? floor : undefined;
@@ -211,7 +238,7 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
       if (cut && floor! > 0) for (const part of cutParts) part.scaling.y = floor! * h;
       this.setSelectedUnit(selected);
     },
-    setDusk(t) { litMaterial.emissiveIntensity = t * 1.6; },
+    setDusk(t) { dusk = t; for (const material of litMaterials) material.emissiveIntensity = t * 1.6; },
     setHover(on) {
       for (const [material, original] of tintable) Color3.LerpToRef(original, hoverTint, on ? 0.38 : 0, material.albedoColor);
     },

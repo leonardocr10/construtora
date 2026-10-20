@@ -24,7 +24,8 @@ export class ModelGenerationService {
 
   constructor(private readonly prisma: PrismaService, private readonly developments: DevelopmentsService) {}
 
-  async generateTowerModel(context: OrganizationContext, buildingId: string) {
+  /** ctivate: grava o GLB em model3d.glb da torre, para o visualizador público usá-lo no lugar do modelo paramétrico. */
+  async generateTowerModel(context: OrganizationContext, buildingId: string, options: { activate?: boolean } = {}) {
     assertCanEdit(context);
     const building = await this.prisma.building.findFirst({ where: { id: buildingId, development: { organizationId: context.organizationId, archivedAt: null } }, include: { floors: { select: { number: true } } } });
     if (!building) throw new NotFoundException('Torre não encontrada');
@@ -72,7 +73,8 @@ export class ModelGenerationService {
         this.prisma.modelVersion.update({ where: { id: modelVersion.id }, data: { warnings } }),
         ...(hadViewer ? [] : [this.prisma.viewerConfiguration.updateMany({ where: { developmentId: building.developmentId, activeModelVersionId: modelVersion.id }, data: { activeModelVersionId: null } })]),
       ]);
-      this.logger.log(`Torre ${building.code}: GLB gerado em ${run.durationMs} ms (versão ${version.version})`);
+      if (options.activate) await this.setViewerModel(context, buildingId, { assetId: asset.id, version: version.version });
+      this.logger.log(`Torre ${building.code}: GLB gerado em ${run.durationMs} ms (versão ${version.version})${options.activate ? ', em uso no visualizador' : ''}`);
       return { job: finishedJob, asset: { id: asset.id, originalName: asset.originalName, byteSize: buffer.length.toString() }, modelVersion: version, unitNodes, durationMs: run.durationMs, stats: run.result };
     } catch (error) {
       if (stored) await unlink(stored).catch(() => undefined);
@@ -88,6 +90,24 @@ export class ModelGenerationService {
       this.running.delete(buildingId);
       await rm(workdir, { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+
+  /**
+   * Define (ou tira, com assetId null) o GLB que o visualizador público usa para a torre: model3d.glb = { assetId, version }.
+   * O asset precisa ser um MODEL_3D do mesmo empreendimento.
+   */
+  async setViewerModel(context: OrganizationContext, buildingId: string, input: { assetId: string | null; version?: number }) {
+    assertCanEdit(context);
+    const building = await this.prisma.building.findFirst({ where: { id: buildingId, development: { organizationId: context.organizationId, archivedAt: null } } });
+    if (!building) throw new NotFoundException('Torre não encontrada');
+    const model3d = { ...((building.model3d && typeof building.model3d === 'object' ? building.model3d : {}) as Record<string, unknown>) };
+    if (input.assetId) {
+      const asset = await this.prisma.developmentAsset.findFirst({ where: { id: input.assetId, developmentId: building.developmentId, kind: AssetKind.MODEL_3D } });
+      if (!asset) throw new BadRequestException('Modelo 3D não encontrado neste empreendimento');
+      model3d.glb = { assetId: asset.id, version: input.version ?? null, generatedAt: asset.createdAt.toISOString() };
+    } else delete model3d.glb;
+    await this.prisma.building.update({ where: { id: buildingId }, data: { model3d: model3d as Prisma.InputJsonValue } });
+    return { buildingId, glb: model3d.glb ?? null };
   }
 
   /** Últimas gerações da torre (para o painel mostrar erro/andamento da anterior). */
