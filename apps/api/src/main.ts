@@ -15,6 +15,16 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   const config = new DocumentBuilder().setTitle('VistaHub API').setVersion('1.0').addBearerAuth().build();
   SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, config));
-  await app.listen(process.env.PORT ?? 3000);
+  const port = Number(process.env.PORT ?? 3000);
+  try {
+    await app.listen(port);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+      console.error(`Porta ${port} já está em uso: outra instância da API provavelmente está rodando. Feche-a (ou defina PORT no .env) e tente novamente.`);
+      await app.close();
+      process.exit(1);
+    }
+    throw error;
+  }
 }
 void bootstrap();
