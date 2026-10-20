@@ -14,25 +14,28 @@ function facadeTexture(base: string, columns: number) {
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = base; ctx.fillRect(0, 0, W, H);
-  for (let i = 0; i < 900; i++) { ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.025})`; ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2); }
-  // Laje entre pavimentos: friso claro com sombra logo abaixo.
-  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fillRect(0, H - 7, W, 4);
-  ctx.fillStyle = 'rgba(0,0,0,0.13)'; ctx.fillRect(0, H - 3, W, 3);
-  ctx.fillStyle = 'rgba(0,0,0,0.05)'; ctx.fillRect(0, 0, W, 3);
   const cell = W / columns;
+  // Painéis em dois tons alternados por apartamento, como nas fachadas de vendas.
+  const alt = new THREE.Color(base).offsetHSL(0.03, 0.06, -0.11).getStyle();
+  for (let c = 0; c < columns; c++) { ctx.fillStyle = c % 2 ? alt : base; ctx.fillRect(c * cell, 0, cell, H); }
+  for (let i = 0; i < 900; i++) { ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.025})`; ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2); }
+  // Junta entre painéis e laje entre pavimentos.
+  ctx.fillStyle = 'rgba(0,0,0,0.10)'; for (let c = 1; c < columns; c++) ctx.fillRect(c * cell - 1, 0, 2, H);
+  ctx.fillStyle = 'rgba(255,255,255,0.45)'; ctx.fillRect(0, H - 7, W, 4);
+  ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(0, H - 3, W, 3);
+  const drawWindow = (wx: number, wy: number, ww: number, wh: number, mullion: boolean) => {
+    ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(wx - 2, wy - 2, ww + 6, wh + 6); // sombra do recuo
+    ctx.fillStyle = '#4f565e'; ctx.fillRect(wx - 3, wy - 3, ww + 6, wh + 6); // caixilho
+    const glass = ctx.createLinearGradient(0, wy, 0, wy + wh);
+    glass.addColorStop(0, '#5f7687'); glass.addColorStop(0.35, '#2e3c48'); glass.addColorStop(1, '#151c23');
+    ctx.fillStyle = glass; ctx.fillRect(wx, wy, ww, wh);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.moveTo(wx, wy + wh * 0.5); ctx.lineTo(wx + ww * 0.4, wy); ctx.lineTo(wx + ww * 0.55, wy); ctx.lineTo(wx, wy + wh * 0.8); ctx.fill();
+    if (mullion) { ctx.fillStyle = '#4f565e'; ctx.fillRect(wx + ww / 2 - 1.5, wy, 3, wh); ctx.fillRect(wx, wy + wh * 0.3, ww, 2); }
+    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.fillRect(wx - 4, wy + wh + 3, ww + 8, 3); // peitoril
+  };
   for (let c = 0; c < columns; c++) {
-    for (const [x, w] of [[0.16, 0.22], [0.58, 0.26]] as const) {
-      const wx = c * cell + x * cell; const ww = w * cell; const wy = 20 * k; const wh = 26 * k;
-      ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(wx - 1, wy + wh + 2, ww + 4, 4);
-      ctx.fillStyle = '#e4e6e3'; ctx.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);
-      const glass = ctx.createLinearGradient(0, wy, 0, wy + wh);
-      glass.addColorStop(0, '#9dbbd0'); glass.addColorStop(0.45, '#4d6676'); glass.addColorStop(1, '#1f2c35');
-      ctx.fillStyle = glass; ctx.fillRect(wx, wy, ww, wh);
-      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.moveTo(wx, wy + wh * 0.55); ctx.lineTo(wx + ww * 0.45, wy); ctx.lineTo(wx + ww * 0.62, wy); ctx.lineTo(wx, wy + wh * 0.85); ctx.fill();
-      ctx.fillStyle = '#e4e6e3'; ctx.fillRect(wx + ww / 2 - 1.5, wy, 3, wh);
-      ctx.fillStyle = '#d2d5d1'; ctx.fillRect(wx - 4, wy + wh + 1, ww + 8, 3);
-    }
+    for (const [x, w] of [[0.16, 0.22], [0.58, 0.26]] as const) drawWindow(c * cell + x * cell, 20 * k, w * cell, 26 * k, true);
+    drawWindow(c * cell + 0.45 * cell, 21 * k, 0.07 * cell, 8 * k, false); // janela do banheiro
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -85,7 +88,7 @@ export function buildTower(building: Building): TowerObject {
   const floors = building.floorCount ?? (Math.max(...building.units.map((u) => u.floor ?? 0), 0) + 1);
   const h = building.floorHeight ?? 2.9;
   const W = model.width; const D = model.depth; const H = floors * h;
-  const colors = { facade: '#eceeea', accent: '#e0622a', roof: '#d8dbd6', base: '#c9ccc6', ...model.colors };
+  const colors = { facade: '#e6ebe8', accent: '#e0622a', roof: '#d8dbd6', base: '#c9ccc6', ...model.colors };
   const slots = model.unitSlots?.length ? model.unitSlots : defaultSlots;
   const columns = Math.max(...slots.map((s) => s.column)) + 1;
 
@@ -144,6 +147,44 @@ export function buildTower(building: Building): TowerObject {
   }
   rails.count = r;
   group.add(rails);
+  // Relevo da fachada: frisos de laje em volta das lâminas, pilastras entre apartamentos e platibanda.
+  const trim = new THREE.MeshStandardMaterial({ color: new THREE.Color(colors.facade).offsetHSL(0, 0, 0.04), roughness: 0.85 });
+  const pilasterMaterial = new THREE.MeshStandardMaterial({ color: new THREE.Color(colors.facade).offsetHSL(0.02, 0.03, -0.12), roughness: 0.9 });
+  const cellsPerWing = Math.max(1, columns / 2);
+  const slabs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), trim, floors * 8);
+  const pilasters = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), pilasterMaterial, (cellsPerWing + 1) * 4 + 8);
+  let s = 0; let p = 0;
+  const box = (mesh: THREE.InstancedMesh, index: number, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
+    dummy.position.set(x, y, z); dummy.scale.set(sx, sy, sz); dummy.updateMatrix(); mesh.setMatrixAt(index, dummy.matrix);
+  };
+  for (const dir of [-1, 1]) {
+    const cx = dir * (coreW / 2 + wingW / 2);
+    for (let f = 1; f <= floors; f++) {
+      const y = f * h - 0.08;
+      box(slabs, s++, cx, y, D / 2 + 0.07, wingW + 0.28, 0.2, 0.14); box(slabs, s++, cx, y, -D / 2 - 0.07, wingW + 0.28, 0.2, 0.14);
+      box(slabs, s++, cx - dir * (wingW / 2 + 0.07), y, 0, 0.14, 0.2, D + 0.28); box(slabs, s++, cx + dir * (wingW / 2 + 0.07), y, 0, 0.14, 0.2, D + 0.28);
+    }
+    for (let j = 0; j <= cellsPerWing; j++) {
+      const x = cx - wingW / 2 + (wingW / cellsPerWing) * j;
+      for (const zDir of [-1, 1]) box(pilasters, p++, x, H / 2, zDir * (D / 2 + 0.06), 0.32, H, 0.16);
+    }
+    for (const xEnd of [-1, 1]) box(pilasters, p++, cx + xEnd * (wingW / 2 + 0.05), H / 2, 0, 0.14, H, D * 0.3);
+  }
+  slabs.count = s; pilasters.count = p;
+  slabs.castShadow = pilasters.castShadow = true; slabs.receiveShadow = pilasters.receiveShadow = true;
+  group.add(slabs, pilasters);
+  // Núcleo de circulação: aberturas da escada por pavimento, com guarda-corpo, nas duas faces.
+  const voids = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: new THREE.Color(colors.accent).multiplyScalar(0.35), roughness: 1 }), floors * 2);
+  const coreRails = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.6, metalness: 0.4 }), floors * 4);
+  let v = 0; let cr = 0;
+  for (let f = 0; f < floors; f++) for (const zDir of [-1, 1]) {
+    const z = zDir * (D * 0.31 + 0.01);
+    box(voids, v++, 0, f * h + h * 0.62, z, coreW * 0.7, h * 0.5, 0.04);
+    box(coreRails, cr++, 0, f * h + h * 0.45, z + zDir * 0.05, coreW * 0.74, 0.05, 0.05);
+    box(coreRails, cr++, 0, f * h + h * 0.62, z + zDir * 0.05, coreW * 0.74, 0.04, 0.04);
+  }
+  voids.count = v; coreRails.count = cr;
+  group.add(voids, coreRails);
   // Casa de máquinas e caixa d'água sobre a cobertura.
   const machine = new THREE.Mesh(new THREE.BoxGeometry(Math.min(7, W * 0.2), 2.4, D * 0.36), plain);
   machine.position.set(-(coreW / 2 + wingW / 2), H + 2.3, 0); machine.castShadow = true;

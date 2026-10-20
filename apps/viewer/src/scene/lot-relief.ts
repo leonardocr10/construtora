@@ -3,7 +3,6 @@ import type { Point } from '../types';
 
 /** Altura da superfície do lote (asfalto) e do que fica acima dela (calçadas, gramados): o degrau é o meio-fio. */
 export const lotBase = 0.18;
-const curb = 0.17;
 
 /** Aproxima a cor desenhada para uma cor de carro real (branco, prata, grafite, preto, vermelho, azul). */
 function carColor(rgb: [number, number, number] | null) {
@@ -104,74 +103,52 @@ export function detectCars(canvas: HTMLCanvasElement, lot: Point[], metersPerPix
   return cars;
 }
 
-/**
- * Relevo do lote como malha com a arte por cima: asfalto na cota base e calçadas/gramados um degrau acima,
- * formando o meio-fio. Retorna a geometria já no referencial do terreno (metros).
- */
-export function buildRelief(canvas: HTMLCanvasElement, lot: Point[], toSite: (p: Point) => Point) {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const step = 4;
-  const xs = lot.map((p) => p[0]); const ys = lot.map((p) => p[1]);
-  const x0 = Math.floor(Math.min(...xs)); const y0 = Math.floor(Math.min(...ys));
-  const nx = Math.ceil((Math.max(...xs) - x0) / step); const ny = Math.ceil((Math.max(...ys) - y0) / step);
-  // Fração de asfalto numa janela 9×9 px: faixas finas pintadas não viram meio-fio.
-  const raised = (px: number, py: number) => {
-    let total = 0, asphalt = 0;
-    for (let dy = -4; dy <= 4; dy += 2) for (let dx = -4; dx <= 4; dx += 2) {
-      const x = Math.round(px + dx); const y = Math.round(py + dy);
-      if (x < 0 || y < 0 || x >= width || y >= height) continue;
-      total++; if (asphaltAt(data, (y * width + x) * 4)) asphalt++;
-    }
-    return total > 0 && asphalt / total < 0.45;
-  };
-  const positions: number[] = []; const uvs: number[] = []; const indices: number[] = [];
-  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
-    const px = x0 + i * step; const py = y0 + j * step;
-    const [x, z] = toSite([px, py]);
-    positions.push(x, lotBase + (raised(px, py) ? curb : 0), z);
-    uvs.push(px / width, 1 - py / height);
-  }
-  const at = (i: number, j: number) => j * (nx + 1) + i;
-  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-    if (!insidePolygon([x0 + (i + 0.5) * step, y0 + (j + 0.5) * step], lot)) continue;
-    indices.push(at(i, j), at(i, j + 1), at(i + 1, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1));
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
+/** Perfil lateral (x ao longo do carro, y altura) extrudado na largura e centrado. */
+function profile(points: [number, number][], width: number, bevel = 0.06) {
+  const shape = new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y)));
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: width - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2, curveSegments: 4 });
+  geometry.translate(0, 0, -(width - bevel * 2) / 2);
   return geometry;
 }
 
-/** Carros 3D instanciados: carroceria, cabine com vidros escuros e rodas, na cor detectada na arte. */
+/**
+ * Carros 3D instanciados com perfil de hatch/sedã: carroceria na cor detectada na arte, vidros escuros,
+ * teto na cor do carro, rodas com calota, faróis e lanternas. Comprimento 4,3 m e largura 1,8 m.
+ */
 export function buildCars(cars: { x: number; z: number; angle: number; color: THREE.Color }[]) {
   const group = new THREE.Group();
   if (!cars.length) return group;
-  const body = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, metalness: 0.35 }), cars.length);
-  const cabin = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25, metalness: 0.2 }), cars.length);
-  const wheels = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.32, 0.32, 0.22, 10).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x1d1d1f, roughness: 0.9 }), cars.length * 4);
-  const dummy = new THREE.Object3D(); const glass = new THREE.Color(0x2a3540); const tint = new THREE.Color();
-  const yaw = new THREE.Quaternion();
-  cars.forEach((car, i) => {
-    const L = 4.3; const W = 1.8;
-    yaw.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -car.angle);
-    dummy.quaternion.copy(yaw);
-    dummy.position.set(car.x, lotBase + 0.62, car.z); dummy.scale.set(L, 0.66, W); dummy.updateMatrix(); body.setMatrixAt(i, dummy.matrix);
-    tint.copy(car.color);
-    body.setColorAt(i, tint);
-    const back = new THREE.Vector3(-0.2, 0, 0).applyQuaternion(yaw);
-    dummy.position.set(car.x + back.x, lotBase + 1.22, car.z + back.z); dummy.scale.set(L * 0.52, 0.55, W * 0.88); dummy.updateMatrix(); cabin.setMatrixAt(i, dummy.matrix);
-    cabin.setColorAt(i, glass.clone().lerp(tint, 0.25));
+  const W = 1.78;
+  const lower = profile([[-2.15, 0.28], [2.12, 0.28], [2.18, 0.5], [2.08, 0.72], [1.2, 0.86], [-1.75, 0.92], [-2.12, 0.86], [-2.18, 0.5]], W);
+  const glassShape = profile([[1.18, 0.84], [0.42, 1.36], [-1.05, 1.38], [-1.72, 0.9]], W * 0.9, 0.04);
+  const roofShape = profile([[0.36, 1.37], [0.4, 1.42], [-1.02, 1.44], [-1.06, 1.38]], W * 0.86, 0.03);
+  const wheel = new THREE.CylinderGeometry(0.33, 0.33, 0.24, 14).rotateX(Math.PI / 2);
+  const hub = new THREE.CylinderGeometry(0.19, 0.19, 0.26, 10).rotateX(Math.PI / 2);
+  const light = new THREE.BoxGeometry(0.06, 0.12, 0.38);
+  const paint = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.45 });
+  const parts = {
+    body: new THREE.InstancedMesh(lower, paint, cars.length),
+    roof: new THREE.InstancedMesh(roofShape, paint, cars.length),
+    glass: new THREE.InstancedMesh(glassShape, new THREE.MeshStandardMaterial({ color: 0x1c252e, roughness: 0.08, metalness: 0.6 }), cars.length),
+    wheels: new THREE.InstancedMesh(wheel, new THREE.MeshStandardMaterial({ color: 0x18181a, roughness: 0.85 }), cars.length * 4),
+    hubs: new THREE.InstancedMesh(hub, new THREE.MeshStandardMaterial({ color: 0xb9bcc0, roughness: 0.35, metalness: 0.7 }), cars.length * 4),
+    head: new THREE.InstancedMesh(light, new THREE.MeshStandardMaterial({ color: 0xf4f1e4, emissive: 0x3a382e, roughness: 0.2 }), cars.length * 2),
+    tail: new THREE.InstancedMesh(light, new THREE.MeshStandardMaterial({ color: 0xa3141b, emissive: 0x2a0204, roughness: 0.3 }), cars.length * 2),
+  };
+  const car = new THREE.Object3D(); const part = new THREE.Object3D(); const matrix = new THREE.Matrix4();
+  const place = (mesh: THREE.InstancedMesh, index: number, x: number, y: number, z: number) => {
+    part.position.set(x, y, z); part.updateMatrix(); matrix.multiplyMatrices(car.matrix, part.matrix); mesh.setMatrixAt(index, matrix);
+  };
+  cars.forEach((c, i) => {
+    car.position.set(c.x, lotBase, c.z); car.rotation.set(0, -c.angle, 0); car.updateMatrix();
+    place(parts.body, i, 0, 0, 0); place(parts.roof, i, 0, 0, 0); place(parts.glass, i, 0, 0, 0);
+    parts.body.setColorAt(i, c.color); parts.roof.setColorAt(i, c.color);
     let k = 0;
-    for (const fx of [-1.35, 1.35]) for (const fz of [-0.82, 0.82]) {
-      const offset = new THREE.Vector3(fx, 0, fz).applyQuaternion(yaw);
-      dummy.position.set(car.x + offset.x, lotBase + 0.32, car.z + offset.z); dummy.scale.set(1, 1, 1); dummy.updateMatrix();
-      wheels.setMatrixAt(i * 4 + k++, dummy.matrix);
-    }
+    for (const fx of [-1.38, 1.38]) for (const fz of [-0.8, 0.8]) { place(parts.wheels, i * 4 + k, fx, 0.33, fz); place(parts.hubs, i * 4 + k, fx, 0.33, fz); k++; }
+    place(parts.head, i * 2, 2.15, 0.6, -0.58); place(parts.head, i * 2 + 1, 2.15, 0.6, 0.58);
+    place(parts.tail, i * 2, -2.16, 0.68, -0.6); place(parts.tail, i * 2 + 1, -2.16, 0.68, 0.6);
   });
-  body.castShadow = cabin.castShadow = true; body.receiveShadow = true;
-  group.add(body, cabin, wheels);
+  for (const mesh of Object.values(parts)) { mesh.castShadow = true; mesh.instanceMatrix.needsUpdate = true; group.add(mesh); }
+  parts.body.receiveShadow = true;
   return group;
 }

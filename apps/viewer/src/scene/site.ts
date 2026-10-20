@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
-import { buildCars, buildRelief, detectCars } from './lot-relief';
+import { buildCars, detectCars } from './lot-relief';
+import { buildGroundMesh, classifyGround, paintGround } from './ground';
 
 /** Converte pixels da implantação para metros no referencial do terreno (antes da rotação do azimute). */
 export function pixelToSite(layout: SiteLayout, [px, py]: Point): Point {
@@ -151,17 +152,21 @@ export function buildSite(development: Development, siteImageUrl: string | null)
         // Carros desenhados viram volumes 3D; o asfalto fica rebaixado em relação às calçadas e gramados.
         const cars = detectCars(canvas, layout.lot!, layout.metersPerPixel);
         group.add(buildCars(cars.map((car) => { const [x, z] = pixelToSite(layout, [car.x, car.y]); return { x, z, angle: car.angle, color: car.color }; })));
+        // Chão modelado: asfalto, grama e piso redesenhados e calçadas/canteiros com meio-fio de verdade.
+        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel);
+        const painted = paintGround(canvas, ground, layout.metersPerPixel, cars);
         lotMesh.geometry.dispose();
-        lotMesh.geometry = buildRelief(canvas, layout.lot!, (p) => pixelToSite(layout, p));
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 8;
+        lotMesh.geometry = buildGroundMesh(ground, (p) => pixelToSite(layout, p), { u: (px) => (px - ground.x0) / ground.w, v: (py) => 1 - (py - ground.y0) / ground.h });
+        const texture = new THREE.CanvasTexture(painted.canvas);
+        texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 16;
         material.map = texture; material.needsUpdate = true;
+        lotMesh.material = [material, new THREE.MeshStandardMaterial({ color: 0xd4d1c8, roughness: 0.9, side: THREE.DoubleSide })];
         const footprints = development.buildings.filter((b) => b.position).map((b) => ({ x: b.position!.x / layout.metersPerPixel + layout.origin[0], y: b.position!.z / layout.metersPerPixel + layout.origin[1], r: Math.hypot(b.model3d?.width ?? 30, b.model3d?.depth ?? 16) / 2 / layout.metersPerPixel + 4 }));
         const trees = detectTrees(canvas, layout.lot!, footprints, layout.metersPerPixel);
         if (trees.length) group.add(buildTrees(trees.map(([px, py, size]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, size] as [number, number, number]; })));
       });
     }
-    const lotMesh = new THREE.Mesh(geometry, material);
+    const lotMesh = new THREE.Mesh<THREE.BufferGeometry, THREE.Material | THREE.Material[]>(geometry, material);
     lotMesh.receiveShadow = true;
     group.add(lotMesh);
     // Meio-fio em volta do lote.
