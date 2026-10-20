@@ -2,7 +2,10 @@
   "name": "realestate-platform",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "dev:api": "npm run start:dev --workspace=@vistahub/api",
     "dev:admin": "npm run start --workspace=@vistahub/admin-web",
@@ -18,5 +21,7 @@
     "provision:admin": "node scripts/provision-admin.mjs",
     "seed:demo": "node scripts/seed-demo.mjs"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  }
 }

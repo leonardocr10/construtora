@@ -2,14 +2,18 @@ import { BadRequestException, Injectable, Logger, NotFoundException, ServiceUnav
 import { AssetKind, DevelopmentStatus } from '@prisma/client';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { LocalFrame } from '@vistahub/geo';
 import { PrismaService } from '../common/prisma.service';
 
 const galleryKinds: AssetKind[] = [AssetKind.FACADE, AssetKind.INTERIOR_RENDER, AssetKind.AMENITY, AssetKind.AERIAL];
 const publicKinds = new Set<AssetKind>([...galleryKinds, AssetKind.IMPLANTATION, AssetKind.FLOOR_PLAN, AssetKind.MODEL_3D, AssetKind.OTHER]);
 const surroundingsRadius = 1600;
+/** Versão do referencial usado no cache do entorno (muda quando a conversão de coordenadas muda). */
+const frameVersion = 'local-wgs84-v1';
 const overpassUrl = process.env.OVERPASS_URL ?? 'https://overpass-api.de/api/interpreter';
 
 type LatLng = [number, number];
+export interface SurroundingsData { frame?: string; roads: unknown[]; buildings: unknown[]; water: unknown[]; green: unknown[] }
 interface OsmElement { type: string; id: number; tags?: Record<string, string>; geometry?: { lat: number; lon: number }[] }
 
 export function storageRoot() { return process.env.LOCAL_STORAGE_PATH ?? join(process.cwd(), 'storage'); }
@@ -104,11 +108,19 @@ ${image ? `<meta property="og:image" content="${e(image)}"><meta property="og:im
     return { roads: result.roads.length, buildings: result.buildings.length, green: result.green.length, water: result.water.length };
   }
 
-  private async loadSurroundings(development: { id: string; latitude: { toNumber(): number } | null; longitude: { toNumber(): number } | null }, refresh: boolean) {
+  private async loadSurroundings(development: { id: string; latitude: { toNumber(): number } | null; longitude: { toNumber(): number } | null }, refresh: boolean): Promise<SurroundingsData> {
     const lat = development.latitude?.toNumber(); const lng = development.longitude?.toNumber();
     if (lat == null || lng == null) throw new BadRequestException('Empreendimento sem latitude/longitude');
     const file = join(storageRoot(), development.id, 'osm-surroundings.json');
-    if (!refresh) { try { return JSON.parse(await readFile(file, 'utf8')); } catch { /* sem cache */ } }
+    // Cache só vale se foi gerado no referencial atual (LocalFrame WGS84); caso contrário, refaz e usa o antigo como reserva.
+    let stale: SurroundingsData | null = null;
+    if (!refresh) {
+      try {
+        const cached = JSON.parse(await readFile(file, 'utf8')) as SurroundingsData;
+        if (cached.frame === frameVersion) return cached;
+        stale = cached;
+      } catch { /* sem cache */ }
+    }
     const query = `[out:json][timeout:60];(way["highway"](around:${surroundingsRadius},${lat},${lng});way["building"](around:${surroundingsRadius},${lat},${lng});way["natural"="water"](around:${surroundingsRadius},${lat},${lng});way["leisure"~"park|pitch|garden"](around:${surroundingsRadius},${lat},${lng});way["landuse"~"grass|forest|meadow"](around:${surroundingsRadius},${lat},${lng}););out geom;`;
     let elements: OsmElement[];
     try {
@@ -117,14 +129,16 @@ ${image ? `<meta property="og:image" content="${e(image)}"><meta property="og:im
       elements = ((await response.json()) as { elements: OsmElement[] }).elements;
     } catch (error) {
       this.logger.warn(`Falha ao buscar entorno OSM: ${error instanceof Error ? error.message : String(error)}`);
+      if (stale) return stale;
       throw new ServiceUnavailableException('Não foi possível obter o entorno no OpenStreetMap agora');
     }
+    // Referencial da cena: metros, x leste, z sul, origem na latitude/longitude do empreendimento.
+    const frame = new LocalFrame({ lat, lng });
     const toLocal = ([pLat, pLng]: LatLng): [number, number] => {
-      const x = (pLng - lng) * 111_320 * Math.cos((lat * Math.PI) / 180);
-      const z = -(pLat - lat) * 110_540;
+      const { x, z } = frame.toLocal({ lat: pLat, lng: pLng });
       return [Math.round(x * 10) / 10, Math.round(z * 10) / 10];
     };
-    const result = { center: [lat, lng], radius: surroundingsRadius, attribution: '© colaboradores do OpenStreetMap (ODbL)', roads: [] as unknown[], buildings: [] as unknown[], water: [] as unknown[], green: [] as unknown[] };
+    const result = { frame: frameVersion, center: [lat, lng], radius: surroundingsRadius, attribution: '© colaboradores do OpenStreetMap (ODbL)', roads: [] as unknown[], buildings: [] as unknown[], water: [] as unknown[], green: [] as unknown[] };
     for (const element of elements) {
       if (element.type !== 'way' || !element.geometry?.length) continue;
       const points = element.geometry.map((g) => toLocal([g.lat, g.lon]));
