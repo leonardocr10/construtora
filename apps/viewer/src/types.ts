@@ -16,6 +16,8 @@ export interface Amenity { id: string; name: string; description: string | null;
 export interface SiteLayout {
   siteImageAssetId?: string; imageWidth: number; imageHeight: number; metersPerPixel: number; origin: Point; azimuth: number;
   lot?: Point[]; roads?: { name: string; points: Point[] }[]; showPrices?: boolean; notes?: string[];
+  /** Raio (px) dos círculos numerados impressos na arte, apagados na textura. */
+  markerRadius?: number;
 }
 export interface Development {
   id: string; slug: string; name: string; description: string | null; address: string | null; city: string | null; state: string | null;

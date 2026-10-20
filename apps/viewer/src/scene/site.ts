@@ -7,6 +7,36 @@ export function pixelToSite(layout: SiteLayout, [px, py]: Point): Point {
   return [(px - layout.origin[0]) * layout.metersPerPixel, (py - layout.origin[1]) * layout.metersPerPixel];
 }
 
+/**
+ * Cobre cada círculo de marcador da arte com a cor média do anel ao redor (um "remendo" discreto),
+ * tirando o número impresso no chão sem afetar o restante da implantação.
+ */
+function eraseMarkers(image: HTMLImageElement, markers: Point[], radius: number) {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.drawImage(image, 0, 0);
+  const scale = canvas.width / image.naturalWidth;
+  for (const [mx, my] of markers) {
+    const x = mx * scale; const y = my * scale; const r = radius * scale;
+    const outer = Math.ceil(r * 1.55);
+    const box = ctx.getImageData(Math.max(0, x - outer), Math.max(0, y - outer), outer * 2, outer * 2);
+    let red = 0, green = 0, blue = 0, n = 0;
+    for (let j = 0; j < box.height; j++) for (let i = 0; i < box.width; i++) {
+      const d = Math.hypot(i - outer, j - outer);
+      if (d < r * 1.2 || d > r * 1.55) continue;
+      const k = (j * box.width + i) * 4; red += box.data[k]; green += box.data[k + 1]; blue += box.data[k + 2]; n++;
+    }
+    if (!n) continue;
+    const gradient = ctx.createRadialGradient(x, y, r * 0.9, x, y, r * 1.35);
+    const fill = `rgb(${Math.round(red / n)},${Math.round(green / n)},${Math.round(blue / n)})`;
+    gradient.addColorStop(0, fill); gradient.addColorStop(1, `rgba(${Math.round(red / n)},${Math.round(green / n)},${Math.round(blue / n)},0)`);
+    ctx.fillStyle = gradient;
+    ctx.beginPath(); ctx.arc(x, y, r * 1.35, 0, Math.PI * 2); ctx.fill();
+  }
+  return canvas;
+}
+
 export interface SiteResult {
   group: THREE.Group; towers: TowerObject[]; lotWorld: Point[];
   amenityAnchors: Map<string, THREE.Vector3>; roadAnchors: { name: string; position: THREE.Vector3 }[];
@@ -36,7 +66,10 @@ export function buildSite(development: Development, siteImageUrl: string | null)
     geometry.computeVertexNormals();
     const material = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
     if (siteImageUrl) {
-      new THREE.TextureLoader().load(siteImageUrl, (texture) => {
+      // Os marcadores numerados já existem em 3D: apaga os círculos pintados na arte para não duplicar.
+      const markers = development.amenities.filter((a) => a.position).map((a) => [a.position!.x / layout.metersPerPixel + layout.origin[0], a.position!.z / layout.metersPerPixel + layout.origin[1]] as Point);
+      new THREE.ImageLoader().load(siteImageUrl, (image) => {
+        const texture = new THREE.CanvasTexture(eraseMarkers(image, markers, layout.markerRadius ?? Math.round(layout.imageWidth * 0.0145)));
         texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 8;
         material.map = texture; material.needsUpdate = true;
       });
