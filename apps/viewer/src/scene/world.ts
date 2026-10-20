@@ -14,7 +14,8 @@ interface Label { element: HTMLElement; position: Vector3; minDistance?: number;
 interface Palette { top: Color3; bottom: Color3; fog: Color3; sun: Color3; hemiSky: Color3; hemiGround: Color3; sunIntensity: number; hemiIntensity: number; elevation: number; azimuth: number; exposure: number; fogNear: number; fogFar: number }
 // Intensidades na escala física do Three (lux da direcional); a hemisférica do Babylon não divide por π, então leva 1/π.
 const palettes: Record<LightMode, Palette> = {
-  day: { top: rgb('#9cc4e4'), bottom: rgb('#eef1ee'), fog: rgb('#e6ebe8'), sun: rgb('#fff4e0'), hemiSky: rgb('#dfeaf5'), hemiGround: rgb('#b9b29e'), sunIntensity: 2.2, hemiIntensity: 1.7 / Math.PI, elevation: 62, azimuth: 35, exposure: 1, fogNear: 900, fogFar: 3200 },
+  // Tarde clara: céu azul com horizonte enevoado e quente, sol a 42° com luz levemente dourada (sombras marcadas).
+  day: { top: rgb('#6fa6dc'), bottom: rgb('#f1e9da'), fog: rgb('#e9e2d4'), sun: rgb('#ffe9cc'), hemiSky: rgb('#d3e3f4'), hemiGround: rgb('#b5a88e'), sunIntensity: 2.7, hemiIntensity: 1.4 / Math.PI, elevation: 42, azimuth: 35, exposure: 1, fogNear: 650, fogFar: 2700 },
   // Fim de tarde: céu enevoado e quente, sol baixo a oeste, sombras longas e luz difusa reduzida.
   sunset: { top: rgb('#b3a49d'), bottom: rgb('#e6c49c'), fog: rgb('#dcc0a0'), sun: rgb('#ffae6e'), hemiSky: rgb('#e6cdb6'), hemiGround: rgb('#8f7a69'), sunIntensity: 2.2, hemiIntensity: 1.15 / Math.PI, elevation: 14, azimuth: -72, exposure: 1.0, fogNear: 420, fogFar: 2800 },
 };
@@ -88,7 +89,7 @@ export class World {
 
     // Reflexos suaves (vidros e fachadas): ambiente pequeno gerado aqui, sem baixar arquivos.
     scene.environmentTexture = skyEnvironment(scene);
-    scene.environmentIntensity = 0.35;
+    scene.environmentIntensity = 0.55;
 
     this.skyTexture = new DynamicTexture('sky', this.skyCanvas, scene, false);
     this.sky = new Layer('sky', null, scene, true);
@@ -147,10 +148,14 @@ export class World {
     const pipeline = new DefaultRenderingPipeline('main', true, this.scene, [this.camera]);
     pipeline.samples = q.msaa;
     pipeline.fxaaEnabled = q.fxaa;
-    pipeline.bloomEnabled = false;
+    // Brilho suave só nos níveis altos: realça vidros e reflexos do sol sem custo nos aparelhos modestos.
+    pipeline.bloomEnabled = this.quality === 'high' || this.quality === 'ultra';
+    pipeline.bloomThreshold = 0.82; pipeline.bloomWeight = 0.14; pipeline.bloomKernel = 48; pipeline.bloomScale = 0.5;
     pipeline.imageProcessingEnabled = true;
     pipeline.imageProcessing.toneMappingEnabled = true;
     pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+    pipeline.imageProcessing.contrast = 1.12;
+    pipeline.imageProcessing.vignetteEnabled = true; pipeline.imageProcessing.vignetteWeight = 1.2; pipeline.imageProcessing.vignetteStretch = 0.4;
     pipeline.imageProcessing.exposure = this.current.exposure * acesExposure;
     this.pipeline = pipeline;
     if (this.scene.prePassRenderer) this.scene.prePassRenderer.samples = q.msaa;
@@ -340,7 +345,7 @@ export class World {
  */
 export function skyEnvironment(scene: Scene) {
   const size = 32;
-  const zenith = [0.55, 0.68, 0.8], horizon = [0.95, 0.96, 0.95], ground = [0.42, 0.41, 0.38];
+  const zenith = [0.4, 0.6, 0.86], horizon = [0.97, 0.93, 0.86], ground = [0.44, 0.41, 0.35];
   const color = (y: number) => {
     if (y >= 0) { const t = Math.pow(y, 0.6); return horizon.map((h, k) => h + (zenith[k] - h) * t); }
     const t = Math.min(1, -y * 3); return horizon.map((h, k) => h + (ground[k] - h) * t);

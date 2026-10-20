@@ -37,6 +37,57 @@ function tiled(scene: Scene, name: string, canvas: HTMLCanvasElement, meters: nu
   return texture;
 }
 
+function canvas2d(width: number, height: number) {
+  const canvas = Object.assign(document.createElement('canvas'), { width, height });
+  return { canvas, ctx: canvas.getContext('2d')! };
+}
+
+/** Chão da cidade visto do alto: grama seca e terra em manchas suaves, sem emenda (terrenos e quintais). */
+function cityGroundTile(size: number) {
+  const { canvas, ctx } = canvas2d(size, size);
+  const random = seeded(7);
+  ctx.fillStyle = '#b8bf93'; ctx.fillRect(0, 0, size, size);
+  const blobs: [string, number][] = [['rgba(132,160,96,0.22)', 22], ['rgba(190,170,130,0.16)', 14], ['rgba(110,140,84,0.18)', 14], ['rgba(212,210,182,0.16)', 12]];
+  for (const [color, count] of blobs) for (let i = 0; i < count; i++) {
+    const x = random() * size, y = random() * size, r = size * (0.05 + random() * 0.16);
+    for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) {
+      const g = ctx.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r); g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.fillRect(x + ox - r, y + oy - r, r * 2, r * 2);
+    }
+  }
+  for (let i = 0; i < size * size * 0.04; i++) { const l = 140 + random() * 70; ctx.fillStyle = `rgba(${l},${l - 4},${l - 30},0.18)`; ctx.fillRect(random() * size, random() * size, 1.5, 1.5); }
+  return canvas;
+}
+
+/** Fachada de casa (cada face da caixa recebe a imagem inteira): reboco claro tingido pela cor da casa, rodapé, porta e janelas. */
+function houseWallTexture(scene: Scene) {
+  const { canvas, ctx } = canvas2d(256, 128);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 256, 128);
+  ctx.fillStyle = '#d9d4cc'; ctx.fillRect(0, 112, 256, 16); // rodapé
+  const pane = (x: number, w: number) => {
+    ctx.fillStyle = '#f4f4f2'; ctx.fillRect(x - 3, 38, w + 6, 46); // moldura
+    ctx.fillStyle = '#3d4a56'; ctx.fillRect(x, 41, w, 40);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(x + 2, 43, w / 2 - 3, 36);
+    ctx.fillStyle = '#e8e6e0'; ctx.fillRect(x + w / 2 - 1, 41, 2, 40);
+  };
+  pane(24, 44); pane(176, 52);
+  ctx.fillStyle = '#7b5a43'; ctx.fillRect(108, 46, 34, 66); // porta
+  ctx.fillStyle = '#5f4433'; ctx.fillRect(112, 50, 26, 58);
+  const texture = new DynamicTexture('house-wall', canvas, scene, true);
+  texture.update(true); texture.anisotropicFilteringLevel = 4;
+  return texture;
+}
+
+/** Telhado: fiadas de telha (linhas na altura do cone) sobre a cor da instância. */
+function roofTexture(scene: Scene) {
+  const { canvas, ctx } = canvas2d(64, 64);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 64, 64);
+  for (let y = 0; y < 64; y += 6) { ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(0, y, 64, 1.5); ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(0, y + 2, 64, 1); }
+  const texture = new DynamicTexture('house-roof', canvas, scene, true);
+  texture.update(true); texture.wrapU = texture.wrapV = Texture.WRAP_ADDRESSMODE; texture.vScale = 2;
+  return texture;
+}
+
 function insidePolygon([x, z]: Point, polygon: Point[]) {
   let inside = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -84,7 +135,7 @@ export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: P
   const flat = (name: string, geo: Geo, material: ReturnType<typeof pbr>) => shadows(meshFrom(name, geo, scene, material, group), false);
 
   const disc = Array.from({ length: 64 }, (_, i) => { const t = (i / 64) * Math.PI * 2; return [Math.cos(t) * data.radius * 2.6, Math.sin(t) * data.radius * 2.6] as Point; });
-  flat('city-ground', polygon(disc, -0.05), pbr(scene, 'city-ground', { color: 0xcfd1b1, roughness: 1 }));
+  flat('city-ground', polygon(disc, -0.05), pbr(scene, 'city-ground', { map: tiled(scene, 'city-ground', cityGroundTile(512), 90), roughness: 1 }));
 
   const greens = data.green.filter((g) => g.points.length > 3).map((g) => polygon(g.points, 0.02));
   if (greens.length) flat('greens', merge(greens), pbr(scene, 'greens', { map: tiled(scene, 'grass', grassTile(512), 8), roughness: 1, doubleSided: true }));
@@ -166,8 +217,8 @@ export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: P
     const walls = [0xf1ece2, 0xe8e2d4, 0xdfe3e2, 0xf3eadb, 0xe6ddd0, 0xd9d4ca]; const tiles = [0xc9643f, 0xb85a3a, 0xd27a52, 0xa95238, 0x8f8a84];
     const wallColors: Color3[] = houses.map(() => rgb(walls[Math.floor(random() * walls.length)]));
     const roofColors: Color3[] = roofs.map(() => rgb(tiles[Math.floor(random() * tiles.length)]));
-    shadows(instanced('houses', box(1, 1, 1), scene, pbr(scene, 'houses', { color: 0xffffff, roughness: 0.95 }), houses, group, wallColors), true);
-    shadows(instanced('house-roofs', rotateY(cone(0.72, 1, 4), Math.PI / 4), scene, pbr(scene, 'house-roofs', { color: 0xffffff, roughness: 0.9 }), roofs, group, roofColors), true);
+    shadows(instanced('houses', box(1, 1, 1), scene, pbr(scene, 'houses', { map: houseWallTexture(scene), roughness: 0.95 }), houses, group, wallColors), true);
+    shadows(instanced('house-roofs', rotateY(cone(0.72, 1, 4), Math.PI / 4), scene, pbr(scene, 'house-roofs', { map: roofTexture(scene), roughness: 0.85 }), roofs, group, roofColors), true);
   }
 
   // Árvores nas áreas verdes.
