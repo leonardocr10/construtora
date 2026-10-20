@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, OnDestroy, computed, inject, input, signal, viewChild } from '@angular/core';
+import { DecimalPipe } from '@angular/common';
 import { API_URL, ApiService, UnitStatus, VIEWER_URL, errorMessage } from '../core/api.service';
 import { DevelopmentContext } from '../core/development-context';
 import { unitStatus, unitStatuses, val } from '../core/labels';
@@ -282,7 +283,7 @@ export function glbNodes(buffer: ArrayBuffer) {
         </div>
       }
     </div>`,
-  imports: [],
+  imports: [DecimalPipe],
 })
 export class ImplantationEditorPage implements OnDestroy {
   private readonly api = inject(ApiService);

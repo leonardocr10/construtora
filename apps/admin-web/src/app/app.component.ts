@@ -60,6 +60,7 @@ export class AppComponent {
     { icon: '▦', label: 'Unidades', path: 'unidades' },
     { icon: '▦', label: 'Espelho de vendas', path: 'espelho' },
     { icon: '▧', label: 'Plantas e tipologias', path: 'plantas' },
+    { icon: '⌖', label: 'Implantação', path: 'implantacao' },
     { icon: '⬡', label: 'Estúdio 3D', path: 'estudio-3d' },
   ];
 
