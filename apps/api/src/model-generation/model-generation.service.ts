@@ -9,7 +9,7 @@ import { PrismaService } from '../common/prisma.service';
 import { assertCanEdit } from '../common/roles';
 import { DevelopmentsService } from '../developments/developments.service';
 import { storageRoot } from '../public/public.service';
-import { BlenderError, parseGlb, resolveBlenderPath, resolveTowerScript, runBlender, towerInput, towerNodeCode } from './tower-glb';
+import { BlenderError, loadKtx2, parseGlb, resolveBlenderPath, resolveTowerScript, runBlender, towerInput, towerNodeCode } from './tower-glb';
 
 /**
  * Gera o GLB paramétrico de uma torre com o Blender local e o registra como nova versão do modelo 3D.
@@ -44,8 +44,15 @@ export class ModelGenerationService {
       const inputPath = join(workdir, 'tower.json');
       const outputPath = join(workdir, 'tower.glb');
       await writeFile(inputPath, JSON.stringify(input), 'utf8');
-      const run = await runBlender({ blender, script, input: inputPath, output: outputPath, timeoutMs: Number(process.env.BLENDER_TIMEOUT_MS) || 180_000 });
-      const buffer = await readFile(outputPath).catch(() => { throw new BlenderError('INVALID_OUTPUT', 'O Blender terminou sem gerar o arquivo GLB', run.stderr); });
+      // Com o KTX-Software (KTX_PATH), as texturas saem do Blender em JPEG e são comprimidas para KTX2.
+      const ktx2 = await loadKtx2().catch(() => null);
+      const run = await runBlender({ blender, script, input: inputPath, output: outputPath, timeoutMs: Number(process.env.BLENDER_TIMEOUT_MS) || 180_000, env: ktx2 ? { VH_GLB_IMAGES: 'JPEG' } : undefined });
+      let buffer: Buffer = await readFile(outputPath).catch(() => { throw new BlenderError('INVALID_OUTPUT', 'O Blender terminou sem gerar o arquivo GLB', run.stderr); });
+      let textures = ktx2 ? 'JPEG' : 'WebP';
+      if (ktx2) {
+        try { buffer = await ktx2.compress(buffer); textures = 'KTX2 (BasisLZ/ETC1S)'; }
+        catch (error) { this.logger.warn(`Torre ${building.code}: compressão KTX2 falhou, texturas ficam em JPEG: ${(error as Error).message}`); }
+      }
       const glb = parseGlb(buffer);
       const nodeNames = (glb.json.nodes ?? []).map((n) => n.name ?? '');
       const code = towerNodeCode(building.code);
@@ -57,7 +64,7 @@ export class ModelGenerationService {
       await mkdir(join(storageRoot(), building.developmentId), { recursive: true });
       stored = join(storageRoot(), storageKey);
       await writeFile(stored, buffer, { flag: 'wx' });
-      const technical = { generator: 'blender', script: 'scripts/blender/build_tower.py', durationMs: run.durationMs, unitNodes, nodes: nodeNames.length, ...(run.result ?? {}) };
+      const technical = { generator: 'blender', script: 'scripts/blender/build_tower.py', durationMs: run.durationMs, unitNodes, nodes: nodeNames.length, textures, ...(run.result ?? {}) };
       // addAsset ativa a primeira versão do empreendimento; o GLB de uma torre só é ativado manualmente (Estúdio 3D).
       const hadViewer = await this.prisma.viewerConfiguration.findUnique({ where: { developmentId: building.developmentId }, select: { id: true } });
       const asset = await this.developments.addAsset(context, building.developmentId, {

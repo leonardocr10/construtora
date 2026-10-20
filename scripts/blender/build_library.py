@@ -359,7 +359,8 @@ def export(path):
     wanted = {
         "filepath": path, "export_format": "GLB", "export_yup": True, "export_apply": True, "export_extras": True,
         "export_draco_mesh_compression_enable": False, "export_cameras": False, "export_lights": False,
-        "export_materials": "EXPORT", "export_image_format": "WEBP", "export_image_quality": 88,
+        # Imagens em PNG quando o GLB vai ser comprimido para KTX2 depois (scripts/blender/ktx2-glb.mjs).
+        "export_materials": "EXPORT", "export_image_format": os.environ.get("VH_GLB_IMAGES", "WEBP"), "export_image_quality": 88,
         "use_selection": False, "use_visible": False,
     }
     available = set(bpy.ops.export_scene.gltf.get_rna_type().properties.keys())

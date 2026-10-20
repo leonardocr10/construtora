@@ -25,6 +25,7 @@ o bpy só é importado em build_scene/export_glb.
 import colorsys
 import json
 import math
+import os
 import re
 import sys
 
@@ -752,7 +753,7 @@ def export_glb(path):
         "export_cameras": False,
         "export_lights": False,
         "export_materials": "EXPORT",
-        "export_image_format": "WEBP",
+        "export_image_format": os.environ.get("VH_GLB_IMAGES", "WEBP"),  # PNG quando o GLB vai ser comprimido para KTX2 depois
         "export_image_quality": 88,
         "use_selection": False,
         "use_visible": False,

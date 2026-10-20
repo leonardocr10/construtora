@@ -54,14 +54,15 @@ for (const [name, spec] of Object.entries(views)) {
   results[name] = { fps, ...draw }; log(name, JSON.stringify(results[name]));
 }
 const memory = await evaluate(`(() => { const s = __vista.world.scene; const e = s.getEngine();
-  let tex = 0; for (const t of e.getLoadedTexturesCache()) { const w = t.width || t.baseWidth || 0, h = t.height || t.baseHeight || 0; tex += w * h * 4 * (t.generateMipMaps ? 1.33 : 1) * (t.isCube ? 6 : 1); }
+  /* bytes por pixel: RGBA 8 bits = 4; BC7/ASTC 4x4/DXT5/ETC2 RGBA = 1; DXT1/ETC1/ETC2 RGB = 0,5; HDR float = 8-16 */ const bpp = (f) => ({ 36492: 1, 33779: 1, 37496: 1, 37808: 1, 33776: 0.5, 33777: 0.5, 36196: 0.5, 37492: 0.5 })[f] ?? 4; let tex = 0, compressed = 0; for (const t of e.getLoadedTexturesCache()) { const w = t.width || t.baseWidth || 0, h = t.height || t.baseHeight || 0; const b = w * h * bpp(t.format) * ((t.generateMipMaps || t.mipLevelCount > 1) ? 1.33 : 1) * (t.isCube ? 6 : 1); tex += b; if (bpp(t.format) < 4) compressed++; }
   let verts = 0, idx = 0; for (const m of s.meshes) { verts += m.getTotalVertices?.() ?? 0; idx += m.getTotalIndices?.() ?? 0; }
   const res = performance.getEntriesByType('resource'); const transfer = res.reduce((a, r) => a + (r.transferSize || 0), 0); const decoded = res.reduce((a, r) => a + (r.decodedBodySize || 0), 0);
-  return { jsHeapMB: +(performance.memory.usedJSHeapSize / 1048576).toFixed(1), textureMB: +(tex / 1048576).toFixed(1), textures: e.getLoadedTexturesCache().length, meshes: s.meshes.length, materials: s.materials.length, vertices: verts, triangles: Math.round(idx / 3), downloadMB: +(transfer / 1048576).toFixed(2), decodedMB: +(decoded / 1048576).toFixed(2) }; })()`);
+  return { jsHeapMB: +(performance.memory.usedJSHeapSize / 1048576).toFixed(1), textureMB: +(tex / 1048576).toFixed(1), textures: e.getLoadedTexturesCache().length, compressedTextures: compressed, meshes: s.meshes.length, materials: s.materials.length, vertices: verts, triangles: Math.round(idx / 3), downloadMB: +(transfer / 1048576).toFixed(2), decodedMB: +(decoded / 1048576).toFixed(2) }; })()`);
 const out = { label, date: new Date().toISOString(), readyMs: Math.round(ready), ...info, memory, views: results };
 writeFileSync(`${dir}/metrics.json`, JSON.stringify(out, null, 2));
 console.log(JSON.stringify(out));
 ws.close(); chrome.kill(); process.exit(0);
+
 
 
 

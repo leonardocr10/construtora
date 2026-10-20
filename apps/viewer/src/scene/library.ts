@@ -1,4 +1,4 @@
-import { Color3, HDRCubeTexture, LoadAssetContainerAsync, Matrix, Mesh, PBRMaterial, Texture, TransformNode, Vector3, type AssetContainer, type Scene } from './babylon';
+import { Color3, HDRCubeTexture, KhronosTextureContainer2, LoadAssetContainerAsync, Matrix, Mesh, PBRMaterial, Texture, TransformNode, Vector3, type AssetContainer, type Scene } from './babylon';
 
 /**
  * Biblioteca de assets gerada no Blender (scripts/blender/build_library.py, em /library): texturas PBR sem
@@ -9,7 +9,7 @@ import { Color3, HDRCubeTexture, LoadAssetContainerAsync, Matrix, Mesh, PBRMater
  * câmera e some além do alcance, para manter poucas chamadas de desenho e poucos triângulos ao longe.
  */
 export interface LibraryCatalog {
-  textures: Record<string, { meters: number; metal: number; files: Record<string, { file: string; bytes: number }> }>;
+  textures: Record<string, { meters: number; metal: number; files: Record<string, { file: string; bytes: number; ktx2?: { file: string; bytes: number } }> }>;
   sky: Record<'day' | 'sunset', { file: string; sunElevation: number; sunAzimuth: number }>;
   models: Record<string, { file: string; bytes: number; triangles: number }>;
 }
@@ -43,7 +43,22 @@ export class Library {
 
   private constructor(readonly scene: Scene, readonly base: string, readonly catalog: LibraryCatalog) {}
 
+  /**
+   * Decodificador KTX2 (Basis Universal) servido pelo próprio visualizador em /ktx2, sem depender do CDN do Babylon.
+   * Transcodifica para o formato comprimido que a GPU aceita (BC7, ASTC, ETC2) ou RGBA quando não há nenhum.
+   */
+  static useLocalKtx2Decoder(base = '/ktx2/') {
+    const t = `${base}ktx2Transcoders/1/`;
+    Object.assign(KhronosTextureContainer2.URLConfig, {
+      jsDecoderModule: `${base}babylon.ktx2Decoder.js`, jsMSCTranscoder: `${t}msc_basis_transcoder.js`, wasmMSCTranscoder: `${t}msc_basis_transcoder.wasm`,
+      wasmUASTCToASTC: `${t}uastc_astc.wasm`, wasmUASTCToBC7: `${t}uastc_bc7.wasm`, wasmUASTCToRGBA_UNORM: `${t}uastc_rgba8_unorm_v2.wasm`,
+      wasmUASTCToRGBA_SRGB: `${t}uastc_rgba8_srgb_v2.wasm`, wasmUASTCToR8_UNORM: `${t}uastc_r8_unorm.wasm`, wasmUASTCToRG8_UNORM: `${t}uastc_rg8_unorm.wasm`,
+      wasmZSTDDecoder: `${base}zstddec.wasm`,
+    });
+  }
+
   static async load(scene: Scene, base = '/library/'): Promise<Library | null> {
+    Library.useLocalKtx2Decoder();
     try {
       const response = await fetch(`${base}library.json`);
       if (!response.ok) return null;
@@ -86,7 +101,8 @@ export class Library {
     const suffix = this.lowRes ? '_lo' : '';
     const tex = (kind: string, color: boolean) => {
       const entry = info.files[`${kind}${suffix}`] ?? info.files[kind];
-      return this.texture(entry.file, color);
+      // KTX2 quando a biblioteca foi convertida (fica comprimida na GPU); senão o WebP.
+      return this.texture(entry.ktx2?.file ?? entry.file, color);
     };
     material.albedoTexture = tex('albedo', true);
     material.bumpTexture = tex('normal', false);

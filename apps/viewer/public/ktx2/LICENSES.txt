@@ -1,0 +1,4 @@
+﻿Decodificador KTX2 do Babylon.js 9.29.0, copiado de https://cdn.babylonjs.com/v9.29.0/ para ser servido pelo próprio visualizador.
+- babylon.ktx2Decoder.js e uastc_*.wasm: Babylon.js, Apache License 2.0 (https://github.com/BabylonJS/Babylon.js).
+- msc_basis_transcoder.js/.wasm: Basis Universal (Binomial), Apache License 2.0 (https://github.com/BinomialLLC/basis_universal).
+- zstddec.wasm: zstddec (Don McCurdy, MIT) com Zstandard (Meta, BSD).

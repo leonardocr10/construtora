@@ -52,11 +52,11 @@ export interface BlenderRun { durationMs: number; result: Record<string, unknown
 const keepTail = (text: string, max = 64 * 1024) => (text.length > max ? text.slice(-max) : text);
 
 /** Roda `blender -b --factory-startup --python build_tower.py -- input.json output.glb` com tempo limite. */
-export function runBlender(options: { blender: string; script: string; input: string; output: string; timeoutMs?: number }): Promise<BlenderRun> {
+export function runBlender(options: { blender: string; script: string; input: string; output: string; timeoutMs?: number; env?: Record<string, string> }): Promise<BlenderRun> {
   const timeoutMs = options.timeoutMs ?? 180_000;
   const started = Date.now();
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(options.blender, ['-b', '--factory-startup', '--python-exit-code', '1', '--python', options.script, '--', options.input, options.output], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(options.blender, ['-b', '--factory-startup', '--python-exit-code', '1', '--python', options.script, '--', options.input, options.output], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...(options.env ?? {}) } });
     let stdout = ''; let stderr = ''; let timedOut = false;
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout = keepTail(stdout + chunk); });
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr = keepTail(stderr + chunk); });
@@ -95,3 +95,12 @@ export const towerNodeCode = (code: string) => code.replace(/[^A-Za-z0-9_.]/g, '
 
 /** Nome determinístico do volume comercial de um apartamento (igual ao do build_tower.py). */
 export const unitNodeName = (code: string, floor: number, final: string) => `T${towerNodeCode(code)}-F${floor}-U${final.replace(/[^A-Za-z0-9]/g, '').slice(0, 8)}`;
+
+/** Compressão KTX2 dos GLB (scripts/blender/ktx2-glb-lib.mjs): null quando KTX_PATH não aponta para o KTX-Software. */
+export async function loadKtx2(env: NodeJS.ProcessEnv = process.env) {
+  const path = resolve(__dirname, '..', '..', '..', '..', 'scripts', 'blender', 'ktx2-glb-lib.mjs');
+  if (!existsSync(path)) return null;
+  const lib = (await import(path)) /* commonjs: vira require() do .mjs, suportado no Node 22.12+ */ as { resolveKtxBin: (env: NodeJS.ProcessEnv) => string | null; compressGlbTextures: (buffer: Buffer, bin: string) => Promise<Buffer> };
+  const bin = lib.resolveKtxBin(env);
+  return bin ? { compress: (buffer: Buffer) => lib.compressGlbTextures(buffer, bin) } : null;
+}

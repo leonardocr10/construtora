@@ -13,7 +13,9 @@ export async function createEngine(host: HTMLElement): Promise<EngineResult> {
   if (forced !== 'webgl' && (await WebGPUEngine.IsSupportedAsync)) {
     const canvas = make();
     try {
-      const engine = new WebGPUEngine(canvas, { antialias: false, powerPreference: 'high-performance', adaptToDeviceRatio: false });
+      // enableAllFeatures: pede ao dispositivo tudo o que o adaptador oferece, inclusive a compressão de textura
+      // (BC no desktop, ASTC/ETC2 no celular) que o KTX2 usa; sem isso a textura é descompactada para RGBA.
+      const engine = new WebGPUEngine(canvas, { antialias: false, powerPreference: 'high-performance', adaptToDeviceRatio: false, enableAllFeatures: true });
       await engine.initAsync();
       return { engine, canvas, webgpu: true };
     } catch (error) {

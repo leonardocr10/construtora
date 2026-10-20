@@ -14,7 +14,7 @@ Esta etapa melhora a maquete navegável do visualizador sem trocar de motor: Bab
 | 6. Veículos | Hatch (3,94 × 1,72 m), sedã (4,47 × 1,74 m) e SUV (4,20 × 1,79 m). Cada um tem carroceria por seções com caixas de roda, cabine de vidro com colunas e teto pintados, rodas de liga, faróis, lanternas, para-choques, soleiras e retrovisores, em dois níveis de detalhe. A cor de cada carro é a da arte. |
 | 7. Terreno e ruas | Continuam alinhados à implantação calibrada e ao OpenStreetMap (ver `docs/implantacao-geografica.md`). O chão do lote agora usa um material PBR por classe (asfalto, grama, piso), com as faixas e as linhas das vagas numa camada por cima. |
 | 8. Câmeras | Voos em arco (sobem como drone nos deslocamentos longos) e três trajetos em spline com velocidade de cruzeiro: Voo 360°, Chegada (rasante pela frente subindo até a vista aérea) e Sobrevoo. Arrastar ou rolar interrompe o voo. |
-| 9. Otimização | Instâncias finas agrupadas por região, com troca de nível de detalhe pela distância. Peças do mesmo material fundidas, de modo que um carro passa de cerca de 20 malhas para 7. Detalhes finos das torres (caixilhos, guarda-corpos, juntas) somem ao longe. Carros distantes não projetam sombra. Matrizes congeladas no que é estático. Texturas em WebP com mipmaps e versão de 512 px nos níveis baixos. |
+| 9. Otimização | Instâncias finas agrupadas por região, com troca de nível de detalhe pela distância. Peças do mesmo material fundidas, de modo que um carro passa de cerca de 20 malhas para 7. Detalhes finos das torres (caixilhos, guarda-corpos, juntas) somem ao longe. Carros distantes não projetam sombra. Matrizes congeladas no que é estático. Texturas em KTX2 (Basis Universal), que ficam comprimidas na GPU (BC7 no desktop, ASTC/ETC no celular), com mipmaps e versão de 512 px nos níveis baixos. |
 | 10. Qualidade | Baixa, Média, Alta e Ultra. O nível muda sombras, SSAO, antisserrilhado, resolução, bloom, resolução das texturas e distâncias de detalhe. O nível inicial é detectado pelo aparelho. |
 
 ## O que veio do material do cliente e o que é estimado
@@ -70,9 +70,18 @@ Outras vistas da versão nova: [carros](img/maquete-comparativo/extra-carros.jpg
 ² 12,9 MB são os quatro GLB das torres (3,2 MB cada, com texturas) e cerca de 5 MB a biblioteca.
 ³ O Chrome headless limita a 180 quadros por segundo, então 180 quer dizer "no limite". Os números são da mesma máquina e servem para comparar as versões, não como garantia em outros aparelhos.
 
+## Texturas KTX2
+
+As texturas usam KTX2 com Basis Universal, codificadas com o KTX-Software 4.4.2 da Khronos (Apache-2.0, instalador assinado, em `D:/construtora/tools/ktx`, apontado por `KTX_PATH` no `.env`):
+
+- **Biblioteca** (`scripts/blender/ktx2_library.py`): BasisLZ/ETC1S em tudo, com cor em sRGB, normal e ORM em espaço linear e normal na qualidade máxima. O `library.json` ganha a entrada `ktx2` em cada arquivo, e o visualizador usa o KTX2 quando ela existe. São 3,2 MB, contra 4,3 MB em WebP.
+- **GLB** (`scripts/blender/ktx2-glb.mjs`, com o gltf-transform, MIT): as texturas saem do Blender em PNG ou JPEG e viram KTX2. Vale para a vegetação da biblioteca e para as torres, que a API já comprime ao gerar quando `KTX_PATH` existe. Sem ele as texturas ficam em WebP, como antes. Os carros não têm textura.
+- **Visualizador:** o decodificador do Babylon 9.29 (`babylon.ktx2Decoder.js`, transcodificadores Basis/UASTC e zstd) está em `apps/viewer/public/ktx2` e é servido pelo próprio visualizador, sem CDN. O motor WebGPU pede todos os recursos do adaptador (`enableAllFeatures`); sem isso a GPU não recebia a compressão BC e o KTX2 era descompactado para RGBA.
+
+Efeito medido em Ultra, no build de produção: 40 texturas chegam à GPU em BC7. As texturas de arquivo passam de 320 MB (se fossem RGBA) para 246 MB, e a estimativa total, que inclui sombras e alvos de pós-processamento, cai de 442 MB para 368 MB. A maior parte do que sobra são os dois canvases do chão do lote (arte pintada e faixas, 4096 px em RGBA, cerca de 60 MB cada). Reduzir a resolução deles nos níveis Baixa e Média é o próximo ganho. O download total ficou em 17,3 MB em Ultra e 16,0 MB em Baixa, e o FPS ficou na mesma faixa (125 a 180 em Ultra, 180 em Baixa).
+
 ## Limitações e próximos passos
 
-- **Texturas comprimidas para GPU (KTX2/Basis):** não entraram, porque o codificador (KTX-Software, Apache-2.0) precisa ser instalado e eu não baixei ferramentas de fora. As texturas estão em WebP, com mipmaps e versão de 512 px nos níveis Baixa e Média. Com o `toktx` instalado, basta converter `apps/viewer/public/library/textures` e os GLB.
 - **Tamanho dos GLB das torres:** a geometria não está comprimida (Draco ou meshopt). As 4 torres têm os mesmos parâmetros, então um modelo só, instanciado, cortaria cerca de 10 MB. Exige separar as janelas acesas, que hoje são sorteadas por torre.
 - **Relevo:** o terreno continua plano. O lote e as ruas seguem a implantação calibrada e o OSM, sem curvas de nível. Não há dado de altimetria no material.
 - **Mapa de normal nas fachadas:** ficou desligado. Com UV planar espelhada e sem tangentes ele mancha, e com tangentes o shader passa do limite de 16 variáveis entre estágios do WebGPU (com sombras em cascata e instâncias). O relevo do reboco não aparece na escala do prédio. No chão e nos carros o mapa de normal está ligado.
@@ -85,7 +94,12 @@ Outras vistas da versão nova: [carros](img/maquete-comparativo/extra-carros.jpg
 # Biblioteca (texturas, céu HDR, vegetação e carros) em apps/viewer/public/library
 "$BLENDER_PATH" -b --factory-startup --python scripts/blender/build_library.py -- apps/viewer/public/library --res 1024
 
-# Fachada do e-book e GLB das 4 torres do Union Vista, já em uso no visualizador
+# Texturas da biblioteca em KTX2 e vegetação em GLB com KTX2 (KTX_PATH no .env)
+"$BLENDER_PATH" -b --factory-startup --python scripts/blender/ktx2_library.py -- apps/viewer/public/library "$KTX_PATH/ktx.exe"
+VH_GLB_IMAGES=AUTO "$BLENDER_PATH" -b --factory-startup --python scripts/blender/build_library.py -- apps/viewer/public/library --only trees,cars
+node scripts/blender/ktx2-glb.mjs apps/viewer/public/library/models/tree_broadleaf.glb apps/viewer/public/library/models/tree_palm.glb apps/viewer/public/library/models/shrub.glb
+
+# Fachada do e-book e GLB das 4 torres do Union Vista, já em uso no visualizador (KTX2 com KTX_PATH)
 npm run build --workspace=@vistahub/api
 node scripts/blender/union-vista-torres.mjs
 

@@ -32,6 +32,7 @@ export { Vector3, Matrix, Quaternion } from '@babylonjs/core/Maths/math.vector';
 export { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader';
 export type { AssetContainer } from '@babylonjs/core/assetContainer';
 export { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture';
+export { KhronosTextureContainer2 } from '@babylonjs/core/Misc/khronosTextureContainer2';
 export { Material as MaterialBase } from '@babylonjs/core/Materials/material';
 
 // Efeitos colaterais: instâncias finas, picking, sombras, camadas, pré-passe (SSAO2) e pipelines.
@@ -49,3 +50,5 @@ import '@babylonjs/core/PostProcesses/RenderPipeline/postProcessRenderPipelineMa
 // e o céu de fundo a partir do HDR.
 import '@babylonjs/loaders/glTF/2.0';
 import '@babylonjs/core/Helpers/sceneHelpers';
+// Texturas KTX2 (Basis Universal), das texturas da biblioteca e dos GLB do Blender.
+import '@babylonjs/core/Materials/Textures/Loaders/ktxTextureLoader';

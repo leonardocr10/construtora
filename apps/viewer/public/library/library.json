@@ -9,27 +9,51 @@
       "files": {
         "albedo": {
           "file": "textures/asphalt_albedo.webp",
-          "bytes": 140704
+          "bytes": 140704,
+          "ktx2": {
+            "file": "textures/asphalt_albedo.ktx2",
+            "bytes": 158942
+          }
         },
         "normal": {
           "file": "textures/asphalt_normal.webp",
-          "bytes": 634114
+          "bytes": 634114,
+          "ktx2": {
+            "file": "textures/asphalt_normal.ktx2",
+            "bytes": 263895
+          }
         },
         "orm": {
           "file": "textures/asphalt_orm.webp",
-          "bytes": 139668
+          "bytes": 139668,
+          "ktx2": {
+            "file": "textures/asphalt_orm.ktx2",
+            "bytes": 154344
+          }
         },
         "albedo_lo": {
           "file": "textures/asphalt_albedo_lo.webp",
-          "bytes": 13654
+          "bytes": 13654,
+          "ktx2": {
+            "file": "textures/asphalt_albedo_lo.ktx2",
+            "bytes": 35613
+          }
         },
         "normal_lo": {
           "file": "textures/asphalt_normal_lo.webp",
-          "bytes": 130638
+          "bytes": 130638,
+          "ktx2": {
+            "file": "textures/asphalt_normal_lo.ktx2",
+            "bytes": 91075
+          }
         },
         "orm_lo": {
           "file": "textures/asphalt_orm_lo.webp",
-          "bytes": 9808
+          "bytes": 9808,
+          "ktx2": {
+            "file": "textures/asphalt_orm_lo.ktx2",
+            "bytes": 17459
+          }
         }
       }
     },
@@ -39,27 +63,51 @@
       "files": {
         "albedo": {
           "file": "textures/concrete_albedo.webp",
-          "bytes": 13702
+          "bytes": 13702,
+          "ktx2": {
+            "file": "textures/concrete_albedo.ktx2",
+            "bytes": 44131
+          }
         },
         "normal": {
           "file": "textures/concrete_normal.webp",
-          "bytes": 468246
+          "bytes": 468246,
+          "ktx2": {
+            "file": "textures/concrete_normal.ktx2",
+            "bytes": 227874
+          }
         },
         "orm": {
           "file": "textures/concrete_orm.webp",
-          "bytes": 172596
+          "bytes": 172596,
+          "ktx2": {
+            "file": "textures/concrete_orm.ktx2",
+            "bytes": 162928
+          }
         },
         "albedo_lo": {
           "file": "textures/concrete_albedo_lo.webp",
-          "bytes": 2332
+          "bytes": 2332,
+          "ktx2": {
+            "file": "textures/concrete_albedo_lo.ktx2",
+            "bytes": 11283
+          }
         },
         "normal_lo": {
           "file": "textures/concrete_normal_lo.webp",
-          "bytes": 79156
+          "bytes": 79156,
+          "ktx2": {
+            "file": "textures/concrete_normal_lo.ktx2",
+            "bytes": 79673
+          }
         },
         "orm_lo": {
           "file": "textures/concrete_orm_lo.webp",
-          "bytes": 16740
+          "bytes": 16740,
+          "ktx2": {
+            "file": "textures/concrete_orm_lo.ktx2",
+            "bytes": 25105
+          }
         }
       }
     },
@@ -69,27 +117,51 @@
       "files": {
         "albedo": {
           "file": "textures/paving_albedo.webp",
-          "bytes": 13104
+          "bytes": 13104,
+          "ktx2": {
+            "file": "textures/paving_albedo.ktx2",
+            "bytes": 46314
+          }
         },
         "normal": {
           "file": "textures/paving_normal.webp",
-          "bytes": 398232
+          "bytes": 398232,
+          "ktx2": {
+            "file": "textures/paving_normal.ktx2",
+            "bytes": 222090
+          }
         },
         "orm": {
           "file": "textures/paving_orm.webp",
-          "bytes": 106964
+          "bytes": 106964,
+          "ktx2": {
+            "file": "textures/paving_orm.ktx2",
+            "bytes": 123885
+          }
         },
         "albedo_lo": {
           "file": "textures/paving_albedo_lo.webp",
-          "bytes": 3064
+          "bytes": 3064,
+          "ktx2": {
+            "file": "textures/paving_albedo_lo.ktx2",
+            "bytes": 12307
+          }
         },
         "normal_lo": {
           "file": "textures/paving_normal_lo.webp",
-          "bytes": 63408
+          "bytes": 63408,
+          "ktx2": {
+            "file": "textures/paving_normal_lo.ktx2",
+            "bytes": 70016
+          }
         },
         "orm_lo": {
           "file": "textures/paving_orm_lo.webp",
-          "bytes": 11474
+          "bytes": 11474,
+          "ktx2": {
+            "file": "textures/paving_orm_lo.ktx2",
+            "bytes": 11919
+          }
         }
       }
     },
@@ -99,27 +171,51 @@
       "files": {
         "albedo": {
           "file": "textures/paint_albedo.webp",
-          "bytes": 3150
+          "bytes": 3150,
+          "ktx2": {
+            "file": "textures/paint_albedo.ktx2",
+            "bytes": 10902
+          }
         },
         "normal": {
           "file": "textures/paint_normal.webp",
-          "bytes": 500314
+          "bytes": 500314,
+          "ktx2": {
+            "file": "textures/paint_normal.ktx2",
+            "bytes": 225133
+          }
         },
         "orm": {
           "file": "textures/paint_orm.webp",
-          "bytes": 181206
+          "bytes": 181206,
+          "ktx2": {
+            "file": "textures/paint_orm.ktx2",
+            "bytes": 155500
+          }
         },
         "albedo_lo": {
           "file": "textures/paint_albedo_lo.webp",
-          "bytes": 1006
+          "bytes": 1006,
+          "ktx2": {
+            "file": "textures/paint_albedo_lo.ktx2",
+            "bytes": 4544
+          }
         },
         "normal_lo": {
           "file": "textures/paint_normal_lo.webp",
-          "bytes": 82788
+          "bytes": 82788,
+          "ktx2": {
+            "file": "textures/paint_normal_lo.ktx2",
+            "bytes": 80297
+          }
         },
         "orm_lo": {
           "file": "textures/paint_orm_lo.webp",
-          "bytes": 9242
+          "bytes": 9242,
+          "ktx2": {
+            "file": "textures/paint_orm_lo.ktx2",
+            "bytes": 8846
+          }
         }
       }
     },
@@ -129,27 +225,51 @@
       "files": {
         "albedo": {
           "file": "textures/grass_albedo.webp",
-          "bytes": 99228
+          "bytes": 99228,
+          "ktx2": {
+            "file": "textures/grass_albedo.ktx2",
+            "bytes": 160209
+          }
         },
         "normal": {
           "file": "textures/grass_normal.webp",
-          "bytes": 494520
+          "bytes": 494520,
+          "ktx2": {
+            "file": "textures/grass_normal.ktx2",
+            "bytes": 242100
+          }
         },
         "orm": {
           "file": "textures/grass_orm.webp",
-          "bytes": 99702
+          "bytes": 99702,
+          "ktx2": {
+            "file": "textures/grass_orm.ktx2",
+            "bytes": 130258
+          }
         },
         "albedo_lo": {
           "file": "textures/grass_albedo_lo.webp",
-          "bytes": 19914
+          "bytes": 19914,
+          "ktx2": {
+            "file": "textures/grass_albedo_lo.ktx2",
+            "bytes": 46195
+          }
         },
         "normal_lo": {
           "file": "textures/grass_normal_lo.webp",
-          "bytes": 105180
+          "bytes": 105180,
+          "ktx2": {
+            "file": "textures/grass_normal_lo.ktx2",
+            "bytes": 87453
+          }
         },
         "orm_lo": {
           "file": "textures/grass_orm_lo.webp",
-          "bytes": 13514
+          "bytes": 13514,
+          "ktx2": {
+            "file": "textures/grass_orm_lo.ktx2",
+            "bytes": 19863
+          }
         }
       }
     },
@@ -159,27 +279,51 @@
       "files": {
         "albedo": {
           "file": "textures/metal_albedo.webp",
-          "bytes": 2726
+          "bytes": 2726,
+          "ktx2": {
+            "file": "textures/metal_albedo.ktx2",
+            "bytes": 3788
+          }
         },
         "normal": {
           "file": "textures/metal_normal.webp",
-          "bytes": 120176
+          "bytes": 120176,
+          "ktx2": {
+            "file": "textures/metal_normal.ktx2",
+            "bytes": 106348
+          }
         },
         "orm": {
           "file": "textures/metal_orm.webp",
-          "bytes": 157956
+          "bytes": 157956,
+          "ktx2": {
+            "file": "textures/metal_orm.ktx2",
+            "bytes": 162288
+          }
         },
         "albedo_lo": {
           "file": "textures/metal_albedo_lo.webp",
-          "bytes": 560
+          "bytes": 560,
+          "ktx2": {
+            "file": "textures/metal_albedo_lo.ktx2",
+            "bytes": 1028
+          }
         },
         "normal_lo": {
           "file": "textures/metal_normal_lo.webp",
-          "bytes": 3592
+          "bytes": 3592,
+          "ktx2": {
+            "file": "textures/metal_normal_lo.ktx2",
+            "bytes": 3785
+          }
         },
         "orm_lo": {
           "file": "textures/metal_orm_lo.webp",
-          "bytes": 14480
+          "bytes": 14480,
+          "ktx2": {
+            "file": "textures/metal_orm_lo.ktx2",
+            "bytes": 18562
+          }
         }
       }
     }
@@ -203,21 +347,21 @@
   "models": {
     "tree_broadleaf": {
       "file": "models/tree_broadleaf.glb",
-      "bytes": 79844,
+      "bytes": 278700,
       "triangles": 680,
       "height": 6.6,
       "crown": 5.2
     },
     "tree_palm": {
       "file": "models/tree_palm.glb",
-      "bytes": 52464,
+      "bytes": 199908,
       "triangles": 452,
       "height": 9.0,
       "crown": 6.0
     },
     "shrub": {
       "file": "models/shrub.glb",
-      "bytes": 26196,
+      "bytes": 67968,
       "triangles": 164,
       "height": 1.0,
       "crown": 1.4
@@ -243,5 +387,11 @@
       "length": 4.2,
       "width": 1.79
     }
+  },
+  "ktx2": {
+    "tool": "KTX-Software 4.4.2 (ktx create)",
+    "albedo": "BasisLZ/ETC1S sRGB",
+    "orm": "BasisLZ/ETC1S linear",
+    "normal": "BasisLZ/ETC1S linear, qlevel 255"
   }
 }
