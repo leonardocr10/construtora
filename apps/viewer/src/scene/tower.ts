@@ -4,18 +4,34 @@ import type { Building, TowerModel, Unit, UnitSlot, UnitStatus } from '../types'
 export const statusColor: Record<UnitStatus, number> = { AVAILABLE: 0x22a565, RESERVED: 0xf2a33a, SOLD: 0x9a95a6, BLOCKED: 0x6b6f78, UNAVAILABLE: 0x6b6f78 };
 const defaultSlots: UnitSlot[] = Array.from({ length: 8 }, (_, i) => ({ final: String(i + 1).padStart(2, '0'), side: i < 4 ? 'back' : 'front', column: i % 4 }));
 
-/** Textura de fachada: uma faixa de janelas por pavimento, repetida verticalmente. */
+/**
+ * Textura de fachada (um pavimento, repetida na vertical): reboco com leve variação, faixa da laje,
+ * janelas com caixilho, montante central, vidro com reflexo do céu e sombra do peitoril.
+ * As proporções das janelas casam com litTexture (janelas acesas ao entardecer).
+ */
 function facadeTexture(base: string, columns: number) {
+  const W = 512; const H = 128; const k = H / 64;
   const canvas = document.createElement('canvas');
-  canvas.width = 256; canvas.height = 64;
+  canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = base; ctx.fillRect(0, 0, 256, 64);
-  ctx.fillStyle = 'rgba(0,0,0,0.06)'; ctx.fillRect(0, 60, 256, 4);
-  const cell = 256 / columns;
+  ctx.fillStyle = base; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 900; i++) { ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.025})`; ctx.fillRect(Math.random() * W, Math.random() * H, 2, 2); }
+  // Laje entre pavimentos: friso claro com sombra logo abaixo.
+  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fillRect(0, H - 7, W, 4);
+  ctx.fillStyle = 'rgba(0,0,0,0.13)'; ctx.fillRect(0, H - 3, W, 3);
+  ctx.fillStyle = 'rgba(0,0,0,0.05)'; ctx.fillRect(0, 0, W, 3);
+  const cell = W / columns;
   for (let c = 0; c < columns; c++) {
     for (const [x, w] of [[0.16, 0.22], [0.58, 0.26]] as const) {
-      ctx.fillStyle = '#1f2a33'; ctx.fillRect(c * cell + x * cell, 20, w * cell, 26);
-      ctx.fillStyle = 'rgba(160,200,230,0.25)'; ctx.fillRect(c * cell + x * cell, 20, w * cell, 8);
+      const wx = c * cell + x * cell; const ww = w * cell; const wy = 20 * k; const wh = 26 * k;
+      ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(wx - 1, wy + wh + 2, ww + 4, 4);
+      ctx.fillStyle = '#e4e6e3'; ctx.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);
+      const glass = ctx.createLinearGradient(0, wy, 0, wy + wh);
+      glass.addColorStop(0, '#9dbbd0'); glass.addColorStop(0.45, '#4d6676'); glass.addColorStop(1, '#1f2c35');
+      ctx.fillStyle = glass; ctx.fillRect(wx, wy, ww, wh);
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.moveTo(wx, wy + wh * 0.55); ctx.lineTo(wx + ww * 0.45, wy); ctx.lineTo(wx + ww * 0.62, wy); ctx.lineTo(wx, wy + wh * 0.85); ctx.fill();
+      ctx.fillStyle = '#e4e6e3'; ctx.fillRect(wx + ww / 2 - 1.5, wy, 3, wh);
+      ctx.fillStyle = '#d2d5d1'; ctx.fillRect(wx - 4, wy + wh + 1, ww + 8, 3);
     }
   }
   const texture = new THREE.CanvasTexture(canvas);
@@ -84,13 +100,13 @@ export function buildTower(building: Building): TowerObject {
   const wingW = (W - coreW) / 2;
   const side = facadeTexture(colors.facade, columns / 2); side.repeat.set(1, floors);
   const end = facadeTexture(colors.facade, 2); end.repeat.set(1, floors);
-  const plain = new THREE.MeshLambertMaterial({ color: colors.roof });
+  const plain = new THREE.MeshStandardMaterial({ color: colors.roof, roughness: 0.95 });
   const seed = [...building.id].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 2147483647, 7) || 7;
   const litSide = litTexture(columns / 2, floors, seed); const litEnd = litTexture(2, floors, seed + 13);
-  const facade = (map: THREE.Texture, lit: THREE.Texture) => new THREE.MeshLambertMaterial({ map, emissive: 0xffffff, emissiveMap: lit, emissiveIntensity: 0 });
-  const nightMaterials: THREE.MeshLambertMaterial[] = [];
+  const facade = (map: THREE.Texture, lit: THREE.Texture) => new THREE.MeshStandardMaterial({ map, roughness: 0.82, metalness: 0, emissive: 0xffffff, emissiveMap: lit, emissiveIntensity: 0 });
+  const nightMaterials: THREE.MeshStandardMaterial[] = [];
   const wingMaterials = [facade(end, litEnd), facade(end, litEnd), plain, plain, facade(side, litSide), facade(side, litSide)];
-  nightMaterials.push(...(wingMaterials.filter((m) => m !== plain) as THREE.MeshLambertMaterial[]));
+  nightMaterials.push(...(wingMaterials.filter((m) => m !== plain) as THREE.MeshStandardMaterial[]));
   for (const dir of [-1, 1]) {
     const wing = new THREE.Mesh(new THREE.BoxGeometry(wingW, H, D), wingMaterials);
     wing.position.set(dir * (coreW / 2 + wingW / 2), H / 2, 0);
@@ -100,7 +116,7 @@ export function buildTower(building: Building): TowerObject {
     parapet.position.set(wing.position.x, H + 0.55, 0); parapet.castShadow = true;
     group.add(parapet);
   }
-  const accent = new THREE.MeshLambertMaterial({ color: colors.accent });
+  const accent = new THREE.MeshStandardMaterial({ color: colors.accent, roughness: 0.75 });
   const core = new THREE.Mesh(new THREE.BoxGeometry(coreW, H + 3.2, D * 0.62), accent);
   core.position.set(0, (H + 3.2) / 2, 0); core.castShadow = true;
   group.add(core);
@@ -116,7 +132,23 @@ export function buildTower(building: Building): TowerObject {
   }
   balconies.count = b; balconies.castShadow = true;
   group.add(balconies);
-  const base = new THREE.Mesh(new THREE.BoxGeometry(W + 4, 0.4, D + 4), new THREE.MeshLambertMaterial({ color: colors.base }));
+  // Guarda-corpo de vidro das varandas.
+  const railMaterial = new THREE.MeshStandardMaterial({ color: 0xbfd6e2, transparent: true, opacity: 0.45, roughness: 0.1, metalness: 0.1, depthWrite: false });
+  const rails = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), railMaterial, floors * 4);
+  let r = 0;
+  for (let f = 1; f < floors; f++) {
+    for (const dir of [-1, 1]) for (const zDir of [-1, 1]) {
+      dummy.position.set(dir * (W / 2 - 3.2), f * h + 0.85, zDir * (D / 2 + 1.38)); dummy.scale.set(5.2, 1.1, 0.06); dummy.updateMatrix();
+      rails.setMatrixAt(r++, dummy.matrix);
+    }
+  }
+  rails.count = r;
+  group.add(rails);
+  // Casa de máquinas e caixa d'água sobre a cobertura.
+  const machine = new THREE.Mesh(new THREE.BoxGeometry(Math.min(7, W * 0.2), 2.4, D * 0.36), plain);
+  machine.position.set(-(coreW / 2 + wingW / 2), H + 2.3, 0); machine.castShadow = true;
+  group.add(machine);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(W + 4, 0.4, D + 4), new THREE.MeshStandardMaterial({ color: colors.base, roughness: 1 }));
   base.position.y = 0.2; base.receiveShadow = true;
   group.add(base);
 
@@ -148,7 +180,7 @@ export function buildTower(building: Building): TowerObject {
 
   // Corpo recortado: mostra só os pavimentos abaixo do andar selecionado.
   const cutSide = side.clone(); const cutEnd = end.clone();
-  const cutMaterials = [new THREE.MeshLambertMaterial({ map: cutEnd }), new THREE.MeshLambertMaterial({ map: cutEnd }), plain, plain, new THREE.MeshLambertMaterial({ map: cutSide }), new THREE.MeshLambertMaterial({ map: cutSide })];
+  const cutMaterials = [new THREE.MeshStandardMaterial({ map: cutEnd, roughness: 0.82 }), new THREE.MeshStandardMaterial({ map: cutEnd, roughness: 0.82 }), plain, plain, new THREE.MeshStandardMaterial({ map: cutSide, roughness: 0.82 }), new THREE.MeshStandardMaterial({ map: cutSide, roughness: 0.82 })];
   const cutBody = new THREE.Group(); cutBody.visible = false;
   for (const dir of [-1, 1]) {
     const wing = new THREE.Mesh(new THREE.BoxGeometry(wingW, 1, D).translate(0, 0.5, 0), cutMaterials);

@@ -92,7 +92,7 @@ export function buildSurroundings(data: Surroundings, exclusion: Point[]): Surro
   const group = new THREE.Group();
   const random = seeded(42);
 
-  const ground = new THREE.Mesh(new THREE.CircleGeometry(data.radius * 2.6, 64).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xd6d3bf }));
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(data.radius * 2.6, 64).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xcfd1b1 }));
   ground.receiveShadow = true; ground.position.y = -0.05;
   group.add(ground);
 
@@ -117,6 +117,25 @@ export function buildSurroundings(data: Surroundings, exclusion: Point[]): Surro
   }
   if (curbs.length) { const mesh = new THREE.Mesh(mergeGeometries(curbs), new THREE.MeshLambertMaterial({ color: 0xc4c2b8, side: THREE.DoubleSide })); mesh.receiveShadow = true; group.add(mesh); }
   if (asphalt.length) { const mesh = new THREE.Mesh(mergeGeometries(asphalt), new THREE.MeshLambertMaterial({ color: 0x55585e, side: THREE.DoubleSide })); mesh.receiveShadow = true; group.add(mesh); }
+  // Faixas tracejadas no eixo das vias principais.
+  const dashes: THREE.Matrix4[] = []; const dash = new THREE.Object3D();
+  for (const road of data.roads) {
+    if ((roadWidth[road.kind] ?? 0) < 11) continue;
+    for (let i = 1; i < road.points.length; i++) {
+      const a = road.points[i - 1]; const b = road.points[i];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]); const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      for (let d = 2; d < len - 2; d += 9) {
+        const t = d / len;
+        dash.position.set(a[0] + (b[0] - a[0]) * t, 0.13, a[1] + (b[1] - a[1]) * t); dash.rotation.set(0, -angle, 0); dash.scale.set(3, 1, 0.25); dash.updateMatrix();
+        dashes.push(dash.matrix.clone());
+      }
+    }
+  }
+  if (dashes.length) {
+    const marks = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xf2f0e6 }), dashes.length);
+    dashes.forEach((m, i) => marks.setMatrixAt(i, m));
+    group.add(marks);
+  }
   for (const [name, { points }] of named) {
     const mid = points[Math.floor(points.length / 2)];
     if (Math.hypot(mid[0], mid[1]) < data.radius * 0.9) roadLabels.push({ name, position: new THREE.Vector3(mid[0], 2, mid[1]) });
@@ -153,9 +172,12 @@ export function buildSurroundings(data: Surroundings, exclusion: Point[]): Surro
     }
   }
   if (houses.length) {
-    const body = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xebe4d6 }), houses.length);
-    const roof = new THREE.InstancedMesh(new THREE.ConeGeometry(0.72, 1, 4).rotateY(Math.PI / 4), new THREE.MeshLambertMaterial({ color: 0xc9643f }), roofs.length);
-    houses.forEach((m, i) => body.setMatrixAt(i, m)); roofs.forEach((m, i) => roof.setMatrixAt(i, m));
+    const body = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), houses.length);
+    const roof = new THREE.InstancedMesh(new THREE.ConeGeometry(0.72, 1, 4).rotateY(Math.PI / 4), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), roofs.length);
+    const walls = [0xf1ece2, 0xe8e2d4, 0xdfe3e2, 0xf3eadb, 0xe6ddd0, 0xd9d4ca]; const tiles = [0xc9643f, 0xb85a3a, 0xd27a52, 0xa95238, 0x8f8a84];
+    const color = new THREE.Color();
+    houses.forEach((m, i) => { body.setMatrixAt(i, m); body.setColorAt(i, color.setHex(walls[Math.floor(random() * walls.length)])); });
+    roofs.forEach((m, i) => { roof.setMatrixAt(i, m); roof.setColorAt(i, color.setHex(tiles[Math.floor(random() * tiles.length)])); });
     body.castShadow = roof.castShadow = true; body.receiveShadow = true;
     group.add(body, roof);
   }

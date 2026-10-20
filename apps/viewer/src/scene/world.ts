@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 export type LightMode = 'day' | 'sunset';
 
@@ -23,6 +29,8 @@ export class World {
   readonly controls: OrbitControls;
   readonly sun = new THREE.DirectionalLight();
   readonly hemi = new THREE.HemisphereLight();
+  private readonly composer: EffectComposer;
+  private readonly ao: GTAOPass;
   private readonly labels: Label[] = [];
   private flight: Flight | null = null;
   private readonly tickers: ((dt: number) => void)[] = [];
@@ -31,7 +39,7 @@ export class World {
 
   constructor(private readonly host: HTMLElement, private readonly labelLayer: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -54,6 +62,21 @@ export class World {
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.6;
     this.scene.add(this.sun, this.sun.target, this.hemi);
+    // Reflexos suaves de um ambiente neutro para materiais PBR (vidros e fachadas).
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.35;
+
+    // Pós-processamento: oclusão de ambiente (contato e profundidade nas sombras) e antisserrilhado.
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.ao = new GTAOPass(this.scene, this.camera, 1, 1);
+    this.ao.updateGtaoMaterial({ radius: 3.5, distanceExponent: 1.4, thickness: 3, scale: 1.15, samples: 16 });
+    this.ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
+    this.ao.blendIntensity = 0.85;
+    this.composer.addPass(this.ao);
+    this.composer.addPass(new OutputPass());
+    this.composer.addPass(new SMAAPass(1, 1));
     this.setMode('day', true);
 
     new ResizeObserver(() => this.resize()).observe(host);
@@ -133,6 +156,8 @@ export class World {
   private resize() {
     const { clientWidth: w, clientHeight: h } = this.host;
     this.renderer.setSize(w, h);
+    this.composer?.setPixelRatio(this.renderer.getPixelRatio());
+    this.composer?.setSize(w, h);
     this.camera.aspect = w / Math.max(h, 1);
     if (this.inset && w > 760) this.camera.setViewOffset(w, h, this.inset / 2, 0, w, h);
     else this.camera.clearViewOffset();
@@ -160,7 +185,7 @@ export class World {
     // A sombra acompanha o alvo para manter resolução boa perto do empreendimento.
     this.sun.target.position.copy(this.controls.target);
     this.sun.position.copy(this.controls.target).add(this.sunOffset());
-    this.renderer.render(this.scene, this.camera);
+    this.composer.render(dt);
     this.updateLabels();
   }
 
