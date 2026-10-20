@@ -11,6 +11,7 @@ import type { PlanLayout, Point, RoomKind } from '../types';
 
 type Room = PlanLayout['rooms'][number];
 interface Box2 { x0: number; y0: number; x1: number; y1: number; tallOnly?: boolean }
+interface Placement { box: Box2; center: Point; normal: Point; side: Side | null; u: number }
 type Side = { axis: 'x' | 'y'; fixed: number; from: number; to: number; normal: Point };
 
 const eye = 1.6;
@@ -54,7 +55,7 @@ function tiles(base: string, grout: string, metersPerTile: number) {
 }
 
 const palette = {
-  wall: mat('#f4f1ec', 0.92), cap: mat('#3d3a44', 0.9), ceiling: mat('#fbfaf8', 0.95, { side: THREE.DoubleSide }),
+  wall: mat('#f1ece4', 0.92), skirting: mat('#e2dbcf', 0.5), lamp: mat('#ffffff', 0.4, { emissive: '#fff1d6', emissiveIntensity: 1.2 }), cap: mat('#3d3a44', 0.9), ceiling: mat('#fbfaf8', 0.95, { side: THREE.DoubleSide }),
   glass: new THREE.MeshPhysicalMaterial({ color: '#cfe6f2', roughness: 0.05, transmission: 0.6, transparent: true, opacity: 0.35, metalness: 0 }),
   frame: mat('#2f2f35', 0.5, { metalness: 0.4 }), door: mat('#d9c3a3', 0.7), sill: mat('#e9e6e1', 0.6),
   fabric: mat('#8f9aa8', 0.95), fabricDark: mat('#59606d', 0.95), cushion: mat('#d9b98a', 0.95), linen: mat('#f2eee7', 0.95), blanket: mat('#5d7f8f', 0.95),
@@ -105,7 +106,12 @@ const furniture = {
     g.add(box(0.4, 0.35, 0.12, palette.cushion, -w / 2 + 0.45, 0.5, -d / 2 + 0.28), box(0.4, 0.35, 0.12, palette.cushion, w / 2 - 0.45, 0.5, -d / 2 + 0.28));
     return g;
   },
-  tv: (w: number) => group(box(w, 0.45, 0.4, palette.woodDark), box(Math.min(1.25, w - 0.2), 0.72, 0.05, palette.black, 0, 0.75, -0.08), box(0.3, 0.03, 0.2, palette.black, 0, 0.45, -0.05)),
+  tv(w: number, panel = false) {
+    const g = group(box(w, 0.45, 0.4, palette.woodDark), box(Math.min(1.25, w - 0.2), 0.72, 0.05, palette.black, 0, 0.75, -0.08), box(0.3, 0.03, 0.2, palette.black, 0, 0.45, -0.05));
+    // Sem parede atrás (sala integrada): painel ripado solto, como nas plantas humanizadas.
+    if (panel) for (let x = -w / 2 + 0.03; x < w / 2; x += 0.07) g.add(box(0.045, 2.1, 0.04, palette.woodLight, x, 0, -0.22));
+    return g;
+  },
   coffeeTable: () => group(box(0.9, 0.04, 0.5, palette.woodLight, 0, 0.36), ...[[-0.4, -0.2], [0.4, -0.2], [-0.4, 0.2], [0.4, 0.2]].map(([x, z]) => box(0.04, 0.36, 0.04, palette.black, x, 0, z))),
   rug: (w: number, d: number) => { const m = box(w, 0.01, d, palette.rug); m.castShadow = false; return group(m); },
   dining(w: number, d: number) {
@@ -126,7 +132,10 @@ const furniture = {
   toilet: () => group(box(0.38, 0.4, 0.2, palette.porcelain, 0, 0, -0.22), cylinder(0.19, 0.4, palette.porcelain, 0, 0, 0.08, 0.2), box(0.38, 0.4, 0.17, palette.porcelain, 0, 0.4, -0.25)),
   vanity: (w = 0.8) => group(box(w, 0.8, 0.46, palette.woodDark), box(w + 0.02, 0.05, 0.48, palette.porcelain, 0, 0.8), cylinder(0.17, 0.02, palette.steel, 0, 0.84, 0.03), cylinder(0.012, 0.22, palette.steel, 0, 0.85, -0.17), box(w - 0.1, 0.8, 0.02, palette.mirror, 0, 1.15, -0.22)),
   shower() {
-    const g = group(box(0.9, 0.05, 0.9, palette.porcelain), box(0.9, 1.95, 0.01, palette.glass, 0, 0.05, 0.45), box(0.01, 1.95, 0.9, palette.glass, 0.45, 0.05, 0), cylinder(0.1, 0.02, palette.steel, 0, 2.0, -0.3));
+    // Cano na parede do fundo até o chuveiro (nada flutua quando a maquete corta as paredes).
+    const arm = box(0.03, 0.03, 0.3, palette.steel, 0, 1.95, -0.28);
+    const g = group(box(0.9, 0.05, 0.9, palette.porcelain), box(0.9, 1.95, 0.01, palette.glass, 0, 0.05, 0.45), box(0.01, 1.95, 0.9, palette.glass, 0.45, 0.05, 0),
+      cylinder(0.015, 1.98, palette.steel, 0, 0, -0.43), arm, cylinder(0.1, 0.02, palette.steel, 0, 1.94, -0.14), box(0.12, 0.04, 0.03, palette.steel, 0.2, 1.05, -0.43));
     for (const m of g.children) m.castShadow = false;
     return g;
   },
@@ -164,7 +173,7 @@ const overlaps = (a: Box2, b: Box2) => a.x0 < b.x1 - 0.01 && a.x1 > b.x0 + 0.01 
 class Furnisher {
   readonly placed: Box2[] = [];
   readonly minX: number; readonly maxX: number; readonly minY: number; readonly maxY: number;
-  constructor(private readonly room: Room, private readonly obstacles: Box2[], private readonly out: THREE.Group, private readonly toWorld: (p: Point) => THREE.Vector3) {
+  constructor(private readonly room: Room, private readonly obstacles: Box2[], private readonly out: THREE.Group, private readonly toWorld: (p: Point) => THREE.Vector3, private readonly walls: { a: Point; b: Point }[]) {
     const xs = room.points.map((p) => p[0]); const ys = room.points.map((p) => p[1]);
     this.minX = Math.min(...xs) + inset; this.maxX = Math.max(...xs) - inset; this.minY = Math.min(...ys) + inset; this.maxY = Math.max(...ys) - inset;
   }
@@ -172,13 +181,22 @@ class Furnisher {
   get depth() { return this.maxY - this.minY; }
   get area() { return polygonArea(this.room.points); }
 
+  /** Lados do cômodo a partir das arestas do polígono (funciona em salas em L), com a normal para dentro. */
   sides(): Side[] {
-    return ([
-      { axis: 'x', fixed: this.minY, from: this.minX, to: this.maxX, normal: [0, 1] },
-      { axis: 'x', fixed: this.maxY, from: this.minX, to: this.maxX, normal: [0, -1] },
-      { axis: 'y', fixed: this.minX, from: this.minY, to: this.maxY, normal: [1, 0] },
-      { axis: 'y', fixed: this.maxX, from: this.minY, to: this.maxY, normal: [-1, 0] },
-    ] as Side[]).sort((a, b) => (b.to - b.from) - (a.to - a.from));
+    const pts = this.room.points; const out: Side[] = [];
+    pts.forEach((a, i) => {
+      const b = pts[(i + 1) % pts.length];
+      const horizontal = Math.abs(a[1] - b[1]) < 0.02; const vertical = Math.abs(a[0] - b[0]) < 0.02;
+      if (!horizontal && !vertical) return;
+      const axis = horizontal ? 'x' : 'y'; const k = horizontal ? 0 : 1;
+      const from = Math.min(a[k], b[k]) + inset; const to = Math.max(a[k], b[k]) - inset;
+      if (to - from < 0.4) return;
+      const mid = (from + to) / 2; const line = horizontal ? a[1] : a[0];
+      const probe = (sign: number): Point => (horizontal ? [mid, line + sign * 0.15] : [line + sign * 0.15, mid]);
+      const sign = inside(probe(1), pts) ? 1 : -1;
+      out.push({ axis, fixed: line + sign * inset, from, to, normal: horizontal ? [0, sign] : [sign, 0] });
+    });
+    return out.sort((p, q) => (q.to - q.from) - (p.to - p.from));
   }
 
   private footprint(side: Side, u: number, w: number, d: number): Box2 {
@@ -191,15 +209,27 @@ class Furnisher {
     return !this.obstacles.some((o) => (tall || !o.tallOnly) && overlaps(b, o)) && !this.placed.some((o) => overlaps(b, o));
   }
 
+  /** Há parede de verdade atrás do trecho [u - w/2, u + w/2] do lado? (Em salas integradas o contorno do cômodo pode ser aberto.) */
+  private backed(side: Side, u: number, w: number) {
+    const k = side.axis === 'x' ? 0 : 1; const fixedAxis = 1 - k;
+    const spans = this.walls
+      .filter((wall) => Math.abs(wall.a[fixedAxis] - wall.b[fixedAxis]) < 0.05 && Math.abs(wall.a[fixedAxis] - side.fixed) < inset + 0.2)
+      .map((wall) => [Math.min(wall.a[k], wall.b[k]) - 0.1, Math.max(wall.a[k], wall.b[k]) + 0.1] as const)
+      .sort((p, q) => p[0] - q[0]);
+    let reach = u - w / 2;
+    for (const [s0, s1] of spans) { if (s0 > reach + 0.01) break; reach = Math.max(reach, s1); }
+    return reach >= u + w / 2 - 0.01;
+  }
+
   /** Encosta o móvel numa parede; prefer: 'center' | 'start' | 'end' ou uma coordenada ao longo da parede. */
-  wall(model: THREE.Object3D, w: number, d: number, opts: { tall?: boolean; prefer?: 'center' | 'start' | 'end' | number; sides?: Side[] } = {}) {
+  wall(model: THREE.Object3D, w: number, d: number, opts: { tall?: boolean; prefer?: 'center' | 'start' | 'end' | number; sides?: Side[]; loose?: boolean } = {}) {
     for (const side of opts.sides ?? this.sides()) {
       if (side.to - side.from < w) continue;
       const lo = side.from + w / 2; const hi = side.to - w / 2;
       const target = typeof opts.prefer === 'number' ? opts.prefer : opts.prefer === 'start' ? lo : opts.prefer === 'end' ? hi : (lo + hi) / 2;
       let best: number | null = null;
       for (let u = lo; u <= hi + 1e-6; u += 0.05) {
-        if (this.free(this.footprint(side, u, w, d), !!opts.tall) && (best == null || Math.abs(u - target) < Math.abs(best - target))) best = u;
+        if (this.free(this.footprint(side, u, w, d), !!opts.tall) && (opts.loose || this.backed(side, u, w)) && (best == null || Math.abs(u - target) < Math.abs(best - target))) best = u;
       }
       if (best == null) continue;
       return this.put(model, this.footprint(side, best, w, d), side.normal, side, best);
@@ -208,33 +238,48 @@ class Furnisher {
   }
 
   /** Móvel solto (mesa, tapete): posição livre mais próxima do ponto preferido. */
-  center(model: THREE.Object3D, w: number, d: number, near: Point, facing: Point = [0, 1], margin = 0) {
+  /** margin: folga em volta; [largura, profundidade] quando difere (mesa: cadeiras só nos lados compridos). */
+  center(model: THREE.Object3D, w: number, d: number, near: Point, facing: Point = [0, 1], margin: number | [number, number] = 0, turnable = false): Placement | null {
+    if (turnable) return this.center(model, w, d, near, [0, 1], margin) ?? this.center(model, w, d, near, [1, 0], margin);
     let best: { b: Box2; score: number } | null = null;
     const swap = Math.abs(facing[0]) > 0.5;
     const fw = swap ? d : w; const fd = swap ? w : d;
+    const [mw, md] = typeof margin === 'number' ? [margin, margin] : margin;
+    const [mx, my] = swap ? [md, mw] : [mw, md];
     for (let x = this.minX + fw / 2; x <= this.maxX - fw / 2 + 1e-6; x += 0.1) for (let y = this.minY + fd / 2; y <= this.maxY - fd / 2 + 1e-6; y += 0.1) {
-      const b = { x0: x - fw / 2 - margin, x1: x + fw / 2 + margin, y0: y - fd / 2 - margin, y1: y + fd / 2 + margin };
+      const b = { x0: x - fw / 2 - mx, x1: x + fw / 2 + mx, y0: y - fd / 2 - my, y1: y + fd / 2 + my };
       if (!this.free(b, false)) continue;
       const score = Math.hypot(x - near[0], y - near[1]);
       if (!best || score < best.score) best = { b, score };
     }
     if (!best) return null;
-    const b = { x0: best.b.x0 + margin, x1: best.b.x1 - margin, y0: best.b.y0 + margin, y1: best.b.y1 - margin };
-    return this.put(model, b, facing, null, 0, margin);
+    this.placed.push(best.b);
+    const b = { x0: best.b.x0 + mx, x1: best.b.x1 - mx, y0: best.b.y0 + my, y1: best.b.y1 - my };
+    return this.put(model, b, facing, null, 0, 0, false);
   }
 
-  private put(model: THREE.Object3D, b: Box2, normal: Point, side: Side | null, u: number, margin = 0) {
-    this.placed.push({ x0: b.x0 - margin, x1: b.x1 + margin, y0: b.y0 - margin, y1: b.y1 + margin });
+  private put(model: THREE.Object3D, b: Box2, normal: Point, side: Side | null, u: number, margin = 0, track = true): Placement {
+    if (track) this.placed.push({ x0: b.x0 - margin, x1: b.x1 + margin, y0: b.y0 - margin, y1: b.y1 + margin });
     const c: Point = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
     model.position.copy(this.toWorld(c));
     model.rotation.y = Math.atan2(normal[0], normal[1]);
     this.out.add(model);
     return { box: b, center: c, normal, side, u };
   }
-  opposite(side: Side) { return this.sides().find((s) => s.axis === side.axis && s.fixed !== side.fixed)!; }
+  /** Lado em frente (normal contrária) que mais se sobrepõe ao trecho do móvel em u. */
+  opposite(side: Side, u: number): Side {
+    const facing = this.sides().filter((o) => o.axis === side.axis && o.normal[0] === -side.normal[0] && o.normal[1] === -side.normal[1]);
+    const gap = (o: Side) => (u < o.from ? o.from - u : u > o.to ? u - o.to : 0);
+    return facing.sort((p, q) => gap(p) - gap(q) || Math.abs(p.fixed - side.fixed) - Math.abs(q.fixed - side.fixed))[0] ?? side;
+  }
 }
 
-function furnish(f: Furnisher, kind: RoomKind) {
+/** Mesa de jantar com cadeiras: tenta a de 4 lugares e, sem espaço, a de 2. */
+function dining(f: Furnisher, near: Point) {
+  return f.center(furniture.dining(1.2, 0.8), 1.2, 0.8, near, [0, 1], [0.15, 0.5], true) ?? f.center(furniture.dining(0.8, 0.75), 0.8, 0.75, near, [0, 1], [0.1, 0.45], true);
+}
+
+function furnish(f: Furnisher, kind: RoomKind, home: { dining: boolean }) {
   const area = f.area;
   switch (kind) {
     case 'suite':
@@ -244,25 +289,26 @@ function furnish(f: Furnisher, kind: RoomKind) {
       const bed = f.wall(furniture.bed(bw, bd), bw, bd, { prefer: 'center' });
       if (bed?.side) for (const s of double ? [-1, 1] : [1]) f.wall(furniture.nightstand(), 0.45, 0.4, { prefer: bed.u + s * (bw / 2 + 0.25), sides: [bed.side] });
       f.wall(furniture.wardrobe(area > 10 ? 1.8 : 1.4), area > 10 ? 1.8 : 1.4, 0.6, { tall: true, prefer: 'end' }) ?? f.wall(furniture.wardrobe(1), 1, 0.6, { tall: true });
-      if (area > 11) f.wall(furniture.plant(0.9), 0.4, 0.4, { prefer: 'start' });
+      if (area > 11) f.wall(furniture.plant(0.9), 0.4, 0.4, { prefer: 'start', loose: true });
       break;
     }
     case 'living': {
       const sofaW = Math.min(2.2, Math.max(1.5, f.width * 0.55, f.depth * 0.55));
       const sofa = f.wall(furniture.sofa(sofaW), sofaW, 0.88, { prefer: 'center' }) ?? f.wall(furniture.sofa(1.5), 1.5, 0.88);
       if (sofa?.side) {
-        const opp = f.opposite(sofa.side);
-        f.wall(furniture.tv(1.6), 1.6, 0.4, { prefer: sofa.u, sides: [opp] }) ?? f.wall(furniture.tv(1.2), 1.2, 0.4, { sides: [opp] });
+        const opp = f.opposite(sofa.side, sofa.u);
+        f.wall(furniture.tv(1.6), 1.6, 0.4, { prefer: sofa.u, sides: [opp] }) ?? f.wall(furniture.tv(1.2), 1.2, 0.4, { prefer: sofa.u, sides: [opp] })
+          ?? f.wall(furniture.tv(1.4, true), 1.4, 0.48, { prefer: sofa.u, sides: [opp], loose: true, tall: true });
         const front: Point = [sofa.center[0] + sofa.normal[0] * 1.0, sofa.center[1] + sofa.normal[1] * 1.0];
         f.center(furniture.rug(Math.min(2, sofaW), 1.4), Math.min(2, sofaW), 1.4, front, sofa.normal);
         f.placed.pop(); // o tapete fica sob a mesa de centro
         f.center(furniture.coffeeTable(), 0.9, 0.5, front, sofa.normal, 0.25);
       }
-      if (area > 12) {
+      if (area > 11 && !home.dining) {
         const far: Point = sofa ? [sofa.center[0] + sofa.normal[0] * 8, sofa.center[1] + sofa.normal[1] * 8] : centroid([[f.minX, f.minY], [f.maxX, f.maxY]]);
-        f.center(furniture.dining(1.2, 0.8), 1.2, 0.8, far, [0, 1], 0.55);
+        home.dining = !!dining(f, far);
       }
-      f.wall(furniture.plant(), 0.4, 0.4, { prefer: 'start' });
+      f.wall(furniture.plant(), 0.4, 0.4, { prefer: 'start', loose: true });
       break;
     }
     case 'kitchen': {
@@ -270,7 +316,7 @@ function furnish(f: Furnisher, kind: RoomKind) {
       const counter = f.wall(furniture.counter(cw), cw, 0.6, { prefer: 'start' }) ?? f.wall(furniture.counter(1.2), 1.2, 0.6);
       if (counter?.side) f.wall(furniture.fridge(), 0.7, 0.68, { tall: true, prefer: 'end', sides: [counter.side] }) ?? f.wall(furniture.fridge(), 0.7, 0.68, { tall: true });
       else f.wall(furniture.fridge(), 0.7, 0.68, { tall: true });
-      if (area > 9) f.center(furniture.dining(0.9, 0.7), 0.9, 0.7, [(f.minX + f.maxX) / 2, (f.minY + f.maxY) / 2], [0, 1], 0.5);
+      if (area > 8 && !home.dining) home.dining = !!dining(f, [(f.minX + f.maxX) / 2, (f.minY + f.maxY) / 2]);
       break;
     }
     case 'bathroom': {
@@ -287,10 +333,10 @@ function furnish(f: Furnisher, kind: RoomKind) {
         const p: Point = horizontal ? [table.center[0] + dx, table.center[1]] : [table.center[0], table.center[1] + dx];
         f.center(furniture.chair(), 0.5, 0.5, p, horizontal ? [-Math.sign(dx), 0] : [0, -Math.sign(dx)]);
       }
-      f.wall(furniture.plant(), 0.4, 0.4, { prefer: 'end' });
+      f.wall(furniture.plant(), 0.4, 0.4, { prefer: 'end', loose: true });
       break;
     }
-    case 'garden': for (const prefer of ['start', 'end'] as const) f.wall(furniture.plant(1.4), 0.6, 0.6, { prefer }); break;
+    case 'garden': for (const prefer of ['start', 'end'] as const) f.wall(furniture.plant(1.4), 0.6, 0.6, { prefer, loose: true }); break;
     case 'hall': break;
   }
 }
@@ -305,6 +351,9 @@ export class InteriorViewer {
   private readonly camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
   private readonly controls: OrbitControls;
   private readonly ceilings: THREE.Object3D[] = [];
+  private readonly lamps: THREE.Object3D[] = [];
+  private readonly sun = new THREE.DirectionalLight('#fff3e2', 2.2);
+  private readonly hemi = new THREE.HemisphereLight('#f5f7fb', '#b8ad9c', 1.1);
   /** Paredes: na maquete ficam rebaixadas (corte a ~1,1 m) para mostrar os ambientes. */
   private readonly wallGroups: THREE.Object3D[] = [];
   private readonly walls: { a: Point; b: Point; t: number; doors: [number, number][] }[] = [];
@@ -370,11 +419,11 @@ export class InteriorViewer {
   private build() {
     const L = this.layout; const H = L.wallHeight;
     const s = this.size;
-    const sun = new THREE.DirectionalLight('#fff3e2', 2.2);
+    const sun = this.sun;
     sun.position.set(s * 0.6, s * 1.4, s * 0.8); sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
     Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 0.5, far: s * 4 });
-    this.scene.add(sun, new THREE.HemisphereLight('#f5f7fb', '#b8ad9c', 1.1));
+    this.scene.add(sun, sun.target, this.hemi);
 
     const ground = new THREE.Mesh(new THREE.CircleGeometry(s * 3, 48), mat('#d6d9d2', 1));
     ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; ground.receiveShadow = true;
@@ -388,7 +437,14 @@ export class InteriorViewer {
       this.scene.add(floor);
       if (room.kind !== 'balcony' && room.kind !== 'garden') {
         const ceiling = new THREE.Mesh(new THREE.ShapeGeometry(shape), palette.ceiling);
-        ceiling.rotation.x = -Math.PI / 2; ceiling.position.y = H; this.ceilings.push(ceiling); this.scene.add(ceiling);
+        ceiling.rotation.x = -Math.PI / 2; ceiling.position.y = H; ceiling.castShadow = true; this.ceilings.push(ceiling); this.scene.add(ceiling);
+        // Luminária de teto: luz quente que só acende no passeio.
+        const [cx, cy] = centroid(room.points);
+        const lamp = new THREE.PointLight('#ffd9a8', room.kind === 'bathroom' || room.kind === 'service' ? 2.2 : 4.5, 0, 2);
+        lamp.position.copy(this.toWorld([cx, cy], H - 0.35));
+        const fixture = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.03, 24), palette.lamp);
+        fixture.position.copy(this.toWorld([cx, cy], H - 0.02));
+        this.lamps.push(lamp, fixture); this.scene.add(lamp, fixture);
       }
     }
 
@@ -402,6 +458,7 @@ export class InteriorViewer {
       const piece = (s0: number, s1: number, y0: number, y1: number, material: THREE.Material | THREE.Material[] = wallMaterials, depth = t) => {
         if (s1 - s0 < 0.005 || y1 - y0 < 0.005) return;
         const m = box(s1 - s0, y1 - y0, depth, material, (s0 + s1) / 2, y0, 0); g.add(m);
+        if (y0 === 0 && material === wallMaterials) { const skirt = box(s1 - s0, 0.08, depth + 0.02, palette.skirting, (s0 + s1) / 2, 0, 0); skirt.castShadow = false; g.add(skirt); }
       };
       const openings = L.openings.filter((o) => o.wallId === wall.id).sort((p, q) => p.offset - q.offset);
       const doors: [number, number][] = [];
@@ -457,9 +514,13 @@ export class InteriorViewer {
 
     // Mobiliário
     const furnitureGroup = new THREE.Group(); this.scene.add(furnitureGroup);
-    for (const room of L.rooms) {
-      const f = new Furnisher(room, obstacles, furnitureGroup, (p) => this.toWorld(p));
-      try { furnish(f, room.kind); } catch { /* cômodo irregular: segue sem mobiliário */ }
+    const home = { dining: false };
+    // Sala antes da cozinha: em plantas integradas a mesa de jantar fica num só lugar.
+    const order: RoomKind[] = ['living', 'kitchen'];
+    const rooms = [...L.rooms].sort((p, q) => (order.indexOf(p.kind) + 1 || 9) - (order.indexOf(q.kind) + 1 || 9));
+    for (const room of rooms) {
+      const f = new Furnisher(room, obstacles, furnitureGroup, (p) => this.toWorld(p), L.walls);
+      try { furnish(f, room.kind, home); } catch { /* cômodo irregular: segue sem mobiliário */ }
       const view = this.bestView(room, f);
       this.rooms.push({ room, center: view.pos, look: view.look });
     }
@@ -540,7 +601,15 @@ export class InteriorViewer {
     this.mode = mode;
     this.root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
     this.root.classList.toggle('walking', mode === 'walk');
-    for (const c of this.ceilings) c.visible = mode === 'walk';
+    const walk = mode === 'walk';
+    for (const c of this.ceilings) c.visible = walk;
+    for (const l of this.lamps) l.visible = walk;
+    // Passeio: sol mais baixo entrando pelas janelas, luz difusa menor e luminárias acesas (mais contraste).
+    const s = this.size;
+    this.sun.position.set(s * 0.6, walk ? s * 0.55 : s * 1.4, s * 0.8);
+    this.sun.intensity = walk ? 3.2 : 2.2;
+    this.hemi.intensity = walk ? 0.45 : 1.1;
+    this.scene.environmentIntensity = walk ? 0.3 : 0.55;
     for (const g of this.wallGroups) g.scale.y = mode === 'walk' ? 1 : 1.1 / this.layout.wallHeight;
     this.controls.enabled = mode === 'model';
     this.camera.fov = mode === 'walk' ? 70 : 45; this.camera.updateProjectionMatrix();
