@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Point, Surroundings } from '../types';
+import { asphaltTile, pavingTile } from './ground';
 
 const roadWidth: Record<string, number> = {
   motorway: 22, trunk: 20, primary: 16, secondary: 13, tertiary: 11, unclassified: 8, residential: 8, living_street: 6,
@@ -21,9 +22,19 @@ function ribbon(points: Point[], width: number, y: number) {
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  // UV em coordenadas de mundo (metros): a textura continua sem emenda nos cruzamentos.
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(positions.flatMap((v, i) => (i % 3 === 1 ? [] : [v])), 2));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
+}
+
+/** Textura repetida a cada `meters` metros (UV da faixa em metros). */
+function tiled(canvas: HTMLCanvasElement, meters: number) {
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace; texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(1 / meters, 1 / meters); texture.anisotropy = 8;
+  return texture;
 }
 
 /** Polígono plano no chão (áreas verdes, água, lote). */
@@ -115,8 +126,8 @@ export function buildSurroundings(data: Surroundings, exclusion: Point[]): Surro
       if (length > (named.get(road.name)?.length ?? 0)) named.set(road.name, { points: road.points, length });
     }
   }
-  if (curbs.length) { const mesh = new THREE.Mesh(mergeGeometries(curbs), new THREE.MeshLambertMaterial({ color: 0xc4c2b8, side: THREE.DoubleSide })); mesh.receiveShadow = true; group.add(mesh); }
-  if (asphalt.length) { const mesh = new THREE.Mesh(mergeGeometries(asphalt), new THREE.MeshLambertMaterial({ color: 0x55585e, side: THREE.DoubleSide })); mesh.receiveShadow = true; group.add(mesh); }
+  if (curbs.length) { const mesh = new THREE.Mesh(mergeGeometries(curbs), new THREE.MeshLambertMaterial({ map: tiled(pavingTile(256, 64), 4), side: THREE.DoubleSide })); mesh.receiveShadow = true; group.add(mesh); }
+  if (asphalt.length) { const mesh = new THREE.Mesh(mergeGeometries(asphalt), new THREE.MeshLambertMaterial({ map: tiled(asphaltTile(512), 10), side: THREE.DoubleSide })); mesh.receiveShadow = true; group.add(mesh); }
   // Faixas tracejadas no eixo das vias principais.
   const dashes: THREE.Matrix4[] = []; const dash = new THREE.Object3D();
   for (const road of data.roads) {

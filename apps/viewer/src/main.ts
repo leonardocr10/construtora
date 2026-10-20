@@ -4,6 +4,7 @@ import { api } from './api';
 import { World } from './scene/world';
 import { buildSite, type SiteResult } from './scene/site';
 import { buildSurroundings } from './scene/surroundings';
+import { bindTowerHover } from './scene/hover';
 import type { TowerObject } from './scene/tower';
 import type { Development, FloorPlan, Unit, UnitStatus } from './types';
 
@@ -47,6 +48,7 @@ async function start() {
   renderChrome();
   createLabels();
   bindPicking();
+  bindTowerHover(world, site.towers, () => state.tower);
   overview(0.01);
 
   $('loading-text').textContent = 'Carregando o entorno real (OpenStreetMap)';

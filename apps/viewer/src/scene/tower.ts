@@ -77,6 +77,8 @@ export interface TowerObject {
   setSelectedUnit(unitId: string | null): void;
   /** 0 = dia, 1 = pôr do sol: intensidade das janelas acesas. */
   setDusk(t: number): void;
+  /** Realce alaranjado enquanto o mouse está sobre a torre. */
+  setHover(on: boolean): void;
 }
 
 /**
@@ -242,6 +244,10 @@ export function buildTower(building: Building): TowerObject {
   const top = new THREE.Vector3(0, H + 6, 0).applyMatrix4(group.matrixWorld);
   const wings = group.children.filter((c) => c instanceof THREE.Mesh && c !== hit && c !== base && !unitMeshes.has(c.userData.unitId) && !(floorBands as THREE.Object3D[]).includes(c));
   let selected: string | null = null; let unitsFloor: number | null | undefined;
+  // Materiais do corpo que recebem o realce de hover (cor original guardada para voltar).
+  const hoverTint = new THREE.Color(0xff8a3d);
+  const tintable = new Map<THREE.MeshStandardMaterial, THREE.Color>();
+  for (const material of [...wingMaterials, ...cutMaterials, trim, pilasterMaterial, accent] as THREE.MeshStandardMaterial[]) if (!tintable.has(material)) tintable.set(material, material.color.clone());
 
   return {
     building, group, top, center, height: H, unitMeshes, floorBands, pickables: [hit, ...unitMeshes.values()],
@@ -260,6 +266,9 @@ export function buildTower(building: Building): TowerObject {
       this.setSelectedUnit(selected);
     },
     setDusk(t) { for (const material of nightMaterials) material.emissiveIntensity = t * 1.15; },
+    setHover(on) {
+      for (const [material, base] of tintable) material.color.copy(base).lerp(hoverTint, on ? 0.38 : 0);
+    },
     setSelectedUnit(unitId) {
       selected = unitId;
       for (const [id, mesh] of unitMeshes) {

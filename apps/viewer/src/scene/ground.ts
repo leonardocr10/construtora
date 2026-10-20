@@ -155,7 +155,7 @@ function tile(size: number, paint: (ctx: CanvasRenderingContext2D, size: number)
   return canvas;
 }
 
-const asphaltTile = (size: number) => tile(size, (ctx, s) => {
+export const asphaltTile = (size: number) => tile(size, (ctx, s) => {
   ctx.fillStyle = '#5b5d64'; ctx.fillRect(0, 0, s, s);
   for (let i = 0; i < s * s * 0.06; i++) { const l = 50 + rand() * 40; ctx.fillStyle = `rgba(${l},${l},${l + 6},${0.25 + rand() * 0.35})`; ctx.fillRect(rand() * s, rand() * s, 1.4, 1.4); }
   for (let i = 0; i < 6; i++) { // manchas suaves de desgaste
@@ -174,7 +174,7 @@ const grassTile = (size: number) => tile(size, (ctx, s) => {
 });
 
 /** Piso de concreto com juntas (placas de jointMeters). */
-const pavingTile = (size: number, pxPerMeter: number) => tile(size, (ctx, s) => {
+export const pavingTile = (size: number, pxPerMeter: number) => tile(size, (ctx, s) => {
   ctx.fillStyle = '#d9d5cc'; ctx.fillRect(0, 0, s, s);
   for (let i = 0; i < s * s * 0.05; i++) { const l = 190 + rand() * 50; ctx.fillStyle = `rgba(${l},${l - 4},${l - 10},0.5)`; ctx.fillRect(rand() * s, rand() * s, 1.3, 1.3); }
   const joint = Math.max(4, Math.round(pxPerMeter * 1));
