@@ -1,0 +1,21 @@
+{
+  "name": "realestate-platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:api": "npm run start:dev --workspace=@vistahub/api",
+    "dev:admin": "npm run start --workspace=@vistahub/admin-web",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "prisma:generate": "npm run prisma:generate --workspace=@vistahub/api",
+    "prisma:migrate": "npm run prisma:migrate --workspace=@vistahub/api --",
+    "prisma:deploy": "npm run prisma:deploy --workspace=@vistahub/api",
+    "db:init": "node scripts/db-init.mjs",
+    "db:check": "node scripts/check-database.mjs",
+    "db:status": "dotenv -e .env -- prisma migrate status --schema prisma/schema.prisma",
+    "provision:admin": "node scripts/provision-admin.mjs",
+    "seed:demo": "node scripts/seed-demo.mjs"
+  },
+  "engines": { "node": ">=22" }
+}

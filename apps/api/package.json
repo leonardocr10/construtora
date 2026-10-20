@@ -1,0 +1,43 @@
+{
+  "name": "@vistahub/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "dotenv -e ../../.env -- nest start",
+    "start:dev": "dotenv -e ../../.env -- nest start --watch",
+    "build": "nest build",
+    "provision:admin": "node ../../scripts/provision-admin.mjs",
+    "prisma:generate": "dotenv -e ../../.env -- prisma generate --schema ../../prisma/schema.prisma",
+    "prisma:migrate": "dotenv -e ../../.env -- prisma migrate dev --skip-generate --schema ../../prisma/schema.prisma",
+    "prisma:deploy": "dotenv -e ../../.env -- prisma migrate deploy --schema ../../prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@nestjs/common": "^12.0.0",
+    "@nestjs/config": "^12.0.1",
+    "@nestjs/core": "^12.0.0",
+    "@nestjs/jwt": "^12.0.0",
+    "@nestjs/platform-express": "^12.0.0",
+    "@nestjs/swagger": "^12.0.0",
+    "@fastify/static": "^9.0.0",
+    "@nestjs/throttler": "^6.4.0",
+    "@prisma/client": "^6.16.2",
+    "argon2": "^0.44.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "dotenv": "^17.2.2",
+    "helmet": "^8.1.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^12.0.0",
+    "@nestjs/schematics": "^12.0.0",
+    "@nestjs/testing": "^12.0.0",
+    "@types/node": "^24.5.2",
+    "@types/multer": "^2.0.0",
+    "dotenv-cli": "^11.0.0",
+    "prisma": "^6.16.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.0"
+  }
+}

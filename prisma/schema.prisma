@@ -1,0 +1,752 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider          = "mysql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+enum OrganizationRole {
+  SUPERADMIN
+  ADMIN
+  MANAGER
+  EDITOR
+  BROKER
+}
+
+enum DevelopmentStatus {
+  DRAFT
+  PREPARING
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AssetKind {
+  EBOOK
+  IMPLANTATION
+  FACADE
+  FLOOR_PLAN
+  SALES_MIRROR
+  AMENITY
+  INTERIOR_RENDER
+  AERIAL
+  MODEL_3D
+  OTHER
+}
+
+enum UnitStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  BLOCKED
+  UNAVAILABLE
+}
+
+enum RegionKind {
+  BUILDING
+  AMENITY
+  ENTRANCE
+  PARKING
+  POI
+}
+
+enum JobKind {
+  AI_EXTRACTION
+  MODEL_GENERATION
+  IMAGE_OPTIMIZATION
+}
+
+enum JobStatus {
+  QUEUED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum PublicationStatus {
+  DRAFT
+  PUBLISHED
+  RETIRED
+}
+
+enum SubscriptionPlan {
+  BASIC
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum AiProvider {
+  OPENAI
+  GEMINI
+  MESHY
+  TRIPO
+  PARAMETRIC
+}
+
+enum GenerationMode {
+  AI_IMAGES
+  PARAMETRIC
+  IMPORTED
+}
+
+enum ModelReviewDecision {
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  NEGOTIATING
+  WON
+  LOST
+}
+
+enum CreditEvent {
+  GRANTED
+  CONSUMED
+  ADJUSTED
+  REFUNDED
+}
+
+model Organization {
+  id                       String                    @id @default(cuid())
+  name                     String
+  slug                     String                    @unique
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  users                    OrganizationUser[]
+  developments             Development[]
+  subscriptions            Subscription[]
+  usageLedger              UsageLedger[]
+  auditLogs                AuditLog[]
+  aiProviderConfigurations AiProviderConfiguration[]
+  creditLedger             CreditLedger[]
+  creditWallet             CreditWallet?
+}
+
+model User {
+  id                   String               @id @default(cuid())
+  email                String               @unique
+  name                 String
+  passwordHash         String
+  active               Boolean              @default(true)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  organizations        OrganizationUser[]
+  auditLogs            AuditLog[]
+  leads                Lead[]               @relation("leadAssignee")
+  extractionReviews    ExtractionReview[]
+  salesStatusChanges   SalesStatusHistory[] @relation("salesStatusChangedBy")
+  modelReviews         ModelReview[]
+  uploadedAssets       DevelopmentAsset[]   @relation("assetUploadedBy")
+  createdModelVersions ModelVersion[]       @relation("modelVersionCreatedBy")
+  createdJobs          GenerationJob[]      @relation("jobCreatedBy")
+}
+
+model OrganizationUser {
+  organizationId String
+  userId         String
+  role           OrganizationRole
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([organizationId, userId])
+  @@index([userId, active])
+}
+
+model Development {
+  id                  String               @id @default(cuid())
+  organizationId      String
+  name                String
+  slug                String               @unique
+  code                String?
+  description         String?              @db.Text
+  city                String?
+  state               String?
+  address             String?
+  zipCode             String?
+  latitude            Decimal?             @db.Decimal(10, 7)
+  longitude           Decimal?             @db.Decimal(10, 7)
+  deliveryDate        DateTime?
+  status              DevelopmentStatus    @default(DRAFT)
+  coverAssetId        String?
+  archivedAt          DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  coverAsset          DevelopmentAsset?    @relation("DevelopmentCover", fields: [coverAssetId], references: [id], onDelete: SetNull)
+  settings            DevelopmentSettings?
+  theme               DevelopmentTheme?
+  assets              DevelopmentAsset[]
+  buildings           Building[]
+  unitTypes           UnitType[]
+  floorPlans          FloorPlan[]
+  amenities           Amenity[]
+  maps                InteractiveMap[]
+  models              ModelVersion[]
+  jobs                GenerationJob[]
+  extractions         AiExtraction[]
+  leads               Lead[]
+  publications        Publication[]
+  viewEvents          ViewEvent[]
+  viewerConfiguration ViewerConfiguration?
+  threeDGenerations   ThreeDGeneration[]
+
+  @@index([organizationId, status])
+  @@index([coverAssetId])
+  @@index([organizationId, updatedAt])
+}
+
+model DevelopmentSettings {
+  id            String      @id @default(cuid())
+  developmentId String      @unique
+  contactPhone  String?
+  contactEmail  String?
+  whatsapp      String?
+  officialSite  String?
+  navigation    Json?
+  development   Development @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+}
+
+model DevelopmentTheme {
+  id             String      @id @default(cuid())
+  developmentId  String      @unique
+  primaryColor   String      @default("#2563eb")
+  secondaryColor String      @default("#101d33")
+  fontFamily     String      @default("Inter")
+  logoAssetId    String?
+  configuration  Json?
+  development    Development @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+}
+
+model DevelopmentAsset {
+  id               String                 @id @default(cuid())
+  developmentId    String
+  kind             AssetKind
+  originalName     String
+  storageKey       String                 @unique
+  mimeType         String
+  byteSize         BigInt
+  checksum         String
+  metadata         Json?
+  buildingId       String?
+  floorId          String?
+  unitId           String?
+  floorPlanId      String?
+  uploadedById     String?
+  createdAt        DateTime               @default(now())
+  development      Development            @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  building         Building?              @relation("BuildingAssets", fields: [buildingId], references: [id], onDelete: Restrict)
+  floor            Floor?                 @relation(fields: [floorId], references: [id], onDelete: Restrict)
+  unit             Unit?                  @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  floorPlan        FloorPlan?             @relation(fields: [floorPlanId], references: [id], onDelete: Restrict)
+  uploadedBy       User?                  @relation("assetUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  coverOf          Development[]          @relation("DevelopmentCover")
+  buildingImages   Building[]             @relation("BuildingImage")
+  mapBackdrops     InteractiveMap[]       @relation("InteractiveMapAsset")
+  amenityMedia     AmenityMedia[]         @relation("AmenityMediaAsset")
+  modelVersions    ModelVersion[]         @relation("ModelVersionAsset")
+  extractions      AiExtraction[]         @relation("ExtractionAsset")
+  generationInputs ModelGenerationInput[]
+
+  @@index([developmentId, kind])
+  @@index([buildingId])
+  @@index([floorId])
+  @@index([unitId])
+  @@index([floorPlanId])
+  @@index([uploadedById])
+}
+
+model Building {
+  id            String             @id @default(cuid())
+  developmentId String
+  name          String
+  code          String
+  sortOrder     Int                @default(0)
+  imageAssetId  String?
+  position      Json?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  development   Development        @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  imageAsset    DevelopmentAsset?  @relation("BuildingImage", fields: [imageAssetId], references: [id], onDelete: SetNull)
+  floors        Floor[]
+  units         Unit[]
+  regionLinks   RegionLink[]
+  assets        DevelopmentAsset[] @relation("BuildingAssets")
+
+  @@unique([developmentId, code])
+  @@index([imageAssetId])
+}
+
+model Floor {
+  id         String             @id @default(cuid())
+  buildingId String
+  name       String
+  number     Int
+  sortOrder  Int
+  building   Building           @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  units      Unit[]
+  assets     DevelopmentAsset[]
+
+  @@unique([buildingId, number])
+}
+
+model UnitType {
+  id            String      @id @default(cuid())
+  developmentId String
+  name          String
+  bedrooms      Int?
+  suites        Int?
+  privateArea   Decimal?    @db.Decimal(10, 2)
+  description   String?     @db.Text
+  development   Development @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  units         Unit[]
+
+  @@index([developmentId])
+}
+
+model Unit {
+  id            String               @id @default(cuid())
+  buildingId    String
+  floorId       String?
+  unitTypeId    String?
+  number        String
+  final         String?
+  status        UnitStatus           @default(AVAILABLE)
+  privateArea   Decimal?             @db.Decimal(10, 2)
+  totalArea     Decimal?             @db.Decimal(10, 2)
+  price         Decimal?             @db.Decimal(14, 2)
+  building      Building             @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  floor         Floor?               @relation(fields: [floorId], references: [id], onDelete: Restrict)
+  unitType      UnitType?            @relation(fields: [unitTypeId], references: [id], onDelete: Restrict)
+  floorPlans    UnitFloorPlan[]
+  statusHistory SalesStatusHistory[]
+  leads         Lead[]
+  assets        DevelopmentAsset[]
+
+  @@unique([buildingId, number])
+  @@index([buildingId, status])
+  @@index([floorId])
+}
+
+model FloorPlan {
+  id            String             @id @default(cuid())
+  developmentId String
+  name          String
+  code          String?
+  area          Decimal?           @db.Decimal(10, 2)
+  bedrooms      Int?
+  suites        Int?
+  bathrooms     Int?
+  parkingSpaces Int?
+  description   String?            @db.Text
+  development   Development        @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  units         UnitFloorPlan[]
+  assets        DevelopmentAsset[]
+
+  @@index([developmentId])
+}
+
+model UnitFloorPlan {
+  unitId      String
+  floorPlanId String
+  primary     Boolean   @default(false)
+  unit        Unit      @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  floorPlan   FloorPlan @relation(fields: [floorPlanId], references: [id], onDelete: Restrict)
+
+  @@id([unitId, floorPlanId])
+}
+
+model Amenity {
+  id            String         @id @default(cuid())
+  developmentId String
+  name          String
+  description   String?        @db.Text
+  sortOrder     Int            @default(0)
+  development   Development    @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  media         AmenityMedia[]
+  regionLinks   RegionLink[]
+}
+
+model AmenityMedia {
+  id        String           @id @default(cuid())
+  amenityId String
+  assetId   String
+  sortOrder Int              @default(0)
+  amenity   Amenity          @relation(fields: [amenityId], references: [id], onDelete: Restrict)
+  asset     DevelopmentAsset @relation("AmenityMediaAsset", fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@index([amenityId])
+}
+
+model InteractiveMap {
+  id            String              @id @default(cuid())
+  developmentId String
+  name          String
+  assetId       String
+  width         Int
+  height        Int
+  createdAt     DateTime            @default(now())
+  development   Development         @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  asset         DevelopmentAsset    @relation("InteractiveMapAsset", fields: [assetId], references: [id], onDelete: Restrict)
+  regions       InteractiveRegion[]
+}
+
+model InteractiveRegion {
+  id        String         @id @default(cuid())
+  mapId     String
+  name      String
+  kind      RegionKind
+  geometry  Json
+  sortOrder Int            @default(0)
+  map       InteractiveMap @relation(fields: [mapId], references: [id], onDelete: Restrict)
+  links     RegionLink[]
+
+  @@index([mapId])
+}
+
+model RegionLink {
+  id         String            @id @default(cuid())
+  regionId   String
+  buildingId String?
+  amenityId  String?
+  region     InteractiveRegion @relation(fields: [regionId], references: [id], onDelete: Restrict)
+  building   Building?         @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  amenity    Amenity?          @relation(fields: [amenityId], references: [id], onDelete: Restrict)
+
+  @@unique([regionId, buildingId])
+  @@unique([regionId, amenityId])
+}
+
+model ModelVersion {
+  id            String                @id @default(cuid())
+  developmentId String
+  assetId       String
+  version       Int
+  label         String?
+  status        JobStatus             @default(QUEUED)
+  approvedAt    DateTime?
+  warnings      String?               @db.Text
+  createdById   String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  createdBy     User?                 @relation("modelVersionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  activeIn      ViewerConfiguration[]
+  development   Development           @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  asset         DevelopmentAsset      @relation("ModelVersionAsset", fields: [assetId], references: [id], onDelete: Restrict)
+  annotations   ModelAnnotation[]
+  reviews       ModelReview[]
+  generation    ThreeDGeneration?
+
+  @@unique([developmentId, version])
+  @@index([assetId])
+  @@index([createdById])
+}
+
+model ModelAnnotation {
+  id             String       @id @default(cuid())
+  modelVersionId String
+  name           String
+  position       Json
+  link           Json?
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Restrict)
+
+  @@index([modelVersionId])
+}
+
+model GenerationJob {
+  id               String            @id @default(cuid())
+  developmentId    String
+  kind             JobKind
+  status           JobStatus         @default(QUEUED)
+  provider         String?
+  input            Json?
+  output           Json?
+  error            String?           @db.Text
+  attempts         Int               @default(0)
+  createdById      String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime          @default(now())
+  development      Development       @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  createdBy        User?             @relation("jobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  threeDGeneration ThreeDGeneration?
+
+  @@index([developmentId, status])
+  @@index([status, createdAt])
+  @@index([createdById])
+}
+
+model AiExtraction {
+  id            String             @id @default(cuid())
+  developmentId String
+  assetId       String
+  field         String
+  value         Json
+  source        Json?
+  confidence    Decimal?           @db.Decimal(5, 4)
+  confirmedAt   DateTime?
+  createdAt     DateTime           @default(now())
+  development   Development        @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  asset         DevelopmentAsset   @relation("ExtractionAsset", fields: [assetId], references: [id], onDelete: Restrict)
+  reviews       ExtractionReview[]
+
+  @@index([developmentId, confirmedAt])
+}
+
+model ExtractionReview {
+  id             String       @id @default(cuid())
+  extractionId   String
+  userId         String
+  accepted       Boolean
+  correctedValue Json?
+  createdAt      DateTime     @default(now())
+  extraction     AiExtraction @relation(fields: [extractionId], references: [id], onDelete: Restrict)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+}
+
+model SalesStatusHistory {
+  id             String      @id @default(cuid())
+  unitId         String
+  previousStatus UnitStatus?
+  status         UnitStatus
+  changedById    String?
+  reason         String?
+  createdAt      DateTime    @default(now())
+  unit           Unit        @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  changedBy      User?       @relation("salesStatusChangedBy", fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@index([unitId, createdAt])
+}
+
+model Lead {
+  id            String      @id @default(cuid())
+  developmentId String
+  unitId        String?
+  assignedToId  String?
+  name          String
+  phone         String
+  email         String?
+  message       String?     @db.Text
+  source        String?
+  status        LeadStatus  @default(NEW)
+  notes         String?     @db.Text
+  consentAt     DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  development   Development @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  unit          Unit?       @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  assignedTo    User?       @relation("leadAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+
+  @@index([developmentId, createdAt])
+  @@index([developmentId, status])
+  @@index([unitId])
+  @@index([assignedToId])
+}
+
+model Publication {
+  id               String               @id @default(cuid())
+  developmentId    String
+  status           PublicationStatus    @default(DRAFT)
+  currentVersionId String?
+  publishedAt      DateTime?
+  development      Development          @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  versions         PublicationVersion[]
+
+  @@index([developmentId, status])
+}
+
+model PublicationVersion {
+  id            String      @id @default(cuid())
+  publicationId String
+  version       Int
+  payload       Json
+  createdAt     DateTime    @default(now())
+  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Restrict)
+
+  @@unique([publicationId, version])
+}
+
+model ViewEvent {
+  id            String      @id @default(cuid())
+  developmentId String
+  sessionHash   String?
+  event         String
+  metadata      Json?
+  createdAt     DateTime    @default(now())
+  development   Development @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+
+  @@index([developmentId, createdAt])
+}
+
+model Plan {
+  id              String           @id @default(cuid())
+  code            SubscriptionPlan @unique
+  name            String
+  monthlyPrice    Decimal          @db.Decimal(12, 2)
+  monthlyCredits  Decimal          @default(0) @db.Decimal(12, 4)
+  maxDevelopments Int
+  maxUsers        Int
+  maxStorageBytes BigInt
+  features        Json?
+  active          Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  subscriptions   Subscription[]
+}
+
+model Subscription {
+  id             String           @id @default(cuid())
+  organizationId String
+  planId         String?
+  plan           SubscriptionPlan
+  limits         Json
+  active         Boolean          @default(true)
+  startsAt       DateTime         @default(now())
+  endsAt         DateTime?
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  planRef        Plan?            @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, active])
+  @@index([planId])
+}
+
+model UsageLedger {
+  id             String       @id @default(cuid())
+  organizationId String
+  metric         String
+  quantity       BigInt
+  referenceId    String?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, metric, createdAt])
+}
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String?
+  entityType     String
+  entityId       String
+  action         String
+  before         Json?
+  after          Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user           User?        @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, createdAt])
+  @@index([userId])
+}
+
+model ViewerConfiguration {
+  id                   String        @id @default(cuid())
+  developmentId        String        @unique
+  activeModelVersionId String?
+  camera               Json?
+  lighting             Json?
+  interaction          Json?
+  publicLayout         Json?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  development          Development   @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  activeModelVersion   ModelVersion? @relation(fields: [activeModelVersionId], references: [id], onDelete: SetNull)
+
+  @@index([activeModelVersionId])
+}
+
+model AiProviderConfiguration {
+  id              String       @id @default(cuid())
+  organizationId  String
+  provider        AiProvider
+  enabled         Boolean      @default(false)
+  encryptedApiKey String?      @db.Text
+  settings        Json?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, provider])
+}
+
+model ThreeDGeneration {
+  id                     String                 @id @default(cuid())
+  developmentId          String
+  generationJobId        String                 @unique
+  modelVersionId         String?                @unique
+  mode                   GenerationMode
+  provider               AiProvider?
+  providerModel          String?
+  externalJobId          String?                @unique
+  requestedConfiguration Json?
+  technicalMetadata      Json?
+  estimatedCredits       Decimal?               @db.Decimal(12, 4)
+  consumedCredits        Decimal?               @db.Decimal(12, 4)
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+  development            Development            @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+  generationJob          GenerationJob          @relation(fields: [generationJobId], references: [id], onDelete: Restrict)
+  modelVersion           ModelVersion?          @relation(fields: [modelVersionId], references: [id], onDelete: Restrict)
+  inputs                 ModelGenerationInput[]
+
+  @@index([developmentId, createdAt])
+}
+
+model ModelGenerationInput {
+  id           String           @id @default(cuid())
+  generationId String
+  assetId      String
+  view         String
+  sortOrder    Int              @default(0)
+  generation   ThreeDGeneration @relation(fields: [generationId], references: [id], onDelete: Restrict)
+  asset        DevelopmentAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([generationId, assetId])
+  @@index([assetId])
+}
+
+model ModelReview {
+  id             String              @id @default(cuid())
+  modelVersionId String
+  reviewerId     String
+  decision       ModelReviewDecision
+  notes          String?             @db.Text
+  createdAt      DateTime            @default(now())
+  modelVersion   ModelVersion        @relation(fields: [modelVersionId], references: [id], onDelete: Restrict)
+  reviewer       User                @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([modelVersionId, createdAt])
+}
+
+model CreditLedger {
+  id             String       @id @default(cuid())
+  organizationId String
+  provider       AiProvider?
+  event          CreditEvent
+  amount         Decimal      @db.Decimal(12, 4)
+  balanceAfter   Decimal?     @db.Decimal(12, 4)
+  referenceId    String?
+  idempotencyKey String?      @unique
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt])
+}
+
+model CreditWallet {
+  id             String       @id @default(cuid())
+  organizationId String       @unique
+  balance        Decimal      @default(0) @db.Decimal(12, 4)
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+}
