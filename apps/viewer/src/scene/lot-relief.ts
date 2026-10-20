@@ -1,12 +1,12 @@
 import { TransformNode, type Color3, type Matrix, type Scene } from './babylon';
-import { box, compose, cylinder, extrude, getHsl, hsl, instanced, pbr, rgb, rotateX, shadows, srgb, translate, type Geo } from './geometry';
+import { box, compose, computeNormals, cylinder, extrude, getHsl, hsl, instanced, merge, pbr, rgb, rotateX, shadows, srgb, translate, type Geo } from './geometry';
 import type { Point } from '../types';
 
 /** Altura da superfície do lote (asfalto) e do que fica acima dela (calçadas, gramados): o degrau é o meio-fio. */
 export const lotBase = 0.18;
 
 /** Aproxima a cor desenhada para uma cor de carro real (branco, prata, grafite, preto, vermelho, azul). */
-function carColor(drawn: [number, number, number] | null) {
+export function carColor(drawn: [number, number, number] | null) {
   if (!drawn) return fleetColor(Math.random() * 1000);
   const [r, g, b] = drawn; const lum = 0.3 * r + 0.59 * g + 0.11 * b; const sat = (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(1, Math.max(r, g, b));
   if (sat > 0.28) {
@@ -21,7 +21,7 @@ function carColor(drawn: [number, number, number] | null) {
 }
 
 /** Frota realista para carros que a arte desenha escuros (sombra): maioria branco/prata, como nas ruas. */
-function fleetColor(seed: number) {
+export function fleetColor(seed: number) {
   const fleet: [number, number][] = [[0xf1f1ee, 0.3], [0xb6b9bd, 0.2], [0x1d1e22, 0.18], [0x55595f, 0.14], [0x9e2a2b, 0.09], [0x2b4a7a, 0.09]];
   let t = (Math.sin(seed * 12.9898) * 43758.5453) % 1; t = t < 0 ? t + 1 : t;
   for (const [hex, weight] of fleet) { if (t < weight) return rgb(hex); t -= weight; }
@@ -40,7 +40,7 @@ function insidePolygon([x, y]: Point, polygon: Point[]) {
 }
 
 /** Asfalto da arte: cinza de baixa saturação e luminância média (as faixas pintadas ficam de fora). */
-function asphaltAt(data: Uint8ClampedArray, k: number) {
+export function asphaltAt(data: Uint8ClampedArray, k: number) {
   const r = data[k]; const g = data[k + 1]; const b = data[k + 2];
   const lum = 0.3 * r + 0.59 * g + 0.11 * b;
   return Math.max(r, g, b) - Math.min(r, g, b) < 22 && lum > 78 && lum < 140;
@@ -50,7 +50,7 @@ function asphaltAt(data: Uint8ClampedArray, k: number) {
  * Calçada bege/cinza clara e grama: não são carro. Sem isso, carros encostados numa faixa de calçada
  * ou num canteiro se fundem com ela numa mancha grande demais e são descartados.
  */
-function groundAt(data: Uint8ClampedArray, k: number) {
+export function groundAt(data: Uint8ClampedArray, k: number) {
   const r = data[k]; const g = data[k + 1]; const b = data[k + 2];
   const max = Math.max(r, g, b); const min = Math.min(r, g, b); const sat = max ? (max - min) / max : 0;
   const lum = 0.3 * r + 0.59 * g + 0.11 * b;
@@ -152,44 +152,102 @@ export function detectCars(canvas: HTMLCanvasElement, lot: Point[], metersPerPix
 }
 
 /** Perfil lateral (x ao longo do carro, y altura) extrudado na largura e centrado (o chanfro vira um leve acréscimo no perfil). */
-function profile(points: [number, number][], width: number, bevel = 0.06): Geo {
-  // Afasta cada vértice do centro do perfil pelo tamanho do chanfro, como o bevelSize da extrusão do Three.
+function profile(points: [number, number][], width: number, bevel = 0.04): Geo {
   const cx = points.reduce((s, p) => s + p[0], 0) / points.length; const cy = points.reduce((s, p) => s + p[1], 0) / points.length;
   const grown = points.map(([x, y]) => { const d = Math.hypot(x - cx, y - cy) || 1; return [x + ((x - cx) / d) * bevel, y + ((y - cy) / d) * bevel] as [number, number]; });
   return translate(extrude(grown, width), 0, 0, -width / 2);
 }
 
 /**
- * Carros 3D instanciados com perfil de hatch/sedã: carroceria na cor detectada na arte, vidros escuros,
- * teto na cor do carro, rodas com calota, faróis e lanternas. Comprimento 4,3 m e largura 1,8 m.
+ * Dá forma de carro a uma extrusão reta: laterais que se fecham para cima (acima de `from`, até `topScale`
+ * da largura em `to`) e cantos arredondados vistos de cima (estreita nos últimos `corner` metros de cada ponta).
  */
-export function buildCars(scene: Scene, parent: TransformNode, cars: { x: number; z: number; angle: number; color: Color3 }[]) {
+function sculpt(geo: Geo, length: number, from: number, to: number, topScale: number, corner = 0.4) {
+  const p = geo.positions;
+  for (let i = 0; i < p.length; i += 3) {
+    const x = p[i], y = p[i + 1];
+    const up = Math.min(1, Math.max(0, (y - from) / (to - from)));
+    const end = Math.max(0, Math.abs(x) - (length / 2 - corner)) / corner;
+    p[i + 2] *= (1 - (1 - topScale) * up) * (1 - 0.14 * end * end);
+  }
+  geo.normals = undefined;
+  return computeNormals(geo);
+}
+
+interface CarSpec { length: number; width: number; wheelbase: number; wheel: number; belt: number; body: [number, number][]; glass: [number, number][]; roof: [number, number][] }
+
+/** Três carrocerias comuns nas ruas: hatch, sedã e SUV (medidas em metros, frente em +x). */
+const specs: CarSpec[] = [
+  { length: 4.0, width: 1.74, wheelbase: 2.5, wheel: 0.31, belt: 0.88,
+    body: [[-1.98, 0.3], [1.96, 0.3], [2.0, 0.5], [1.94, 0.7], [1.1, 0.86], [-1.84, 0.93], [-1.99, 0.84], [-2.02, 0.52]],
+    glass: [[1.08, 0.85], [0.28, 1.36], [-1.5, 1.39], [-1.84, 0.92]],
+    roof: [[0.3, 1.35], [-1.52, 1.38], [-1.5, 1.43], [0.28, 1.4]] },
+  { length: 4.5, width: 1.78, wheelbase: 2.65, wheel: 0.32, belt: 0.86,
+    body: [[-2.22, 0.3], [2.2, 0.3], [2.25, 0.5], [2.17, 0.69], [1.25, 0.84], [-1.52, 0.9], [-2.18, 0.88], [-2.26, 0.56]],
+    glass: [[1.22, 0.83], [0.38, 1.38], [-0.92, 1.4], [-1.56, 0.89]],
+    roof: [[0.4, 1.37], [-0.94, 1.39], [-0.92, 1.44], [0.38, 1.42]] },
+  { length: 4.4, width: 1.84, wheelbase: 2.65, wheel: 0.36, belt: 1.02,
+    body: [[-2.18, 0.4], [2.16, 0.4], [2.21, 0.64], [2.12, 0.87], [1.22, 1.0], [-2.02, 1.06], [-2.18, 1.0], [-2.22, 0.68]],
+    glass: [[1.2, 0.99], [0.42, 1.58], [-1.86, 1.6], [-2.04, 1.05]],
+    roof: [[0.44, 1.57], [-1.9, 1.59], [-1.88, 1.66], [0.42, 1.64]] },
+];
+
+export interface CarPlacement { x: number; z: number; angle: number; color: Color3; kind?: number; seed?: number }
+
+/**
+ * Carros 3D instanciados: hatch, sedã e SUV com carroceria arredondada na cor detectada na arte
+ * (verniz com reflexo), vidros escuros, teto, para-choques e soleiras em plástico escuro, retrovisores,
+ * pneus com roda de liga, faróis e lanternas. Uma chamada de desenho por peça e modelo.
+ */
+export function buildCars(scene: Scene, parent: TransformNode, cars: CarPlacement[]) {
   const group = new TransformNode('cars', scene); group.parent = parent;
   if (!cars.length) return group;
-  const W = 1.78;
-  const lower = profile([[-2.15, 0.28], [2.12, 0.28], [2.18, 0.5], [2.08, 0.72], [1.2, 0.86], [-1.75, 0.92], [-2.12, 0.86], [-2.18, 0.5]], W);
-  const glassShape = profile([[1.18, 0.84], [0.42, 1.36], [-1.05, 1.38], [-1.72, 0.9]], W * 0.9, 0.04);
-  const roofShape = profile([[0.36, 1.37], [0.4, 1.42], [-1.02, 1.44], [-1.06, 1.38]], W * 0.86, 0.03);
-  const wheel = rotateX(cylinder(0.33, 0.33, 0.24, 14), Math.PI / 2);
-  const hub = rotateX(cylinder(0.19, 0.19, 0.26, 10), Math.PI / 2);
-  const light = box(0.06, 0.12, 0.38);
-  const paint = pbr(scene, 'car-paint', { color: 0xffffff, roughness: 0.3, metalness: 0.45 });
-  const lists = { body: [] as Matrix[], wheels: [] as Matrix[], head: [] as Matrix[], tail: [] as Matrix[] };
-  for (const c of cars) {
-    const car = compose(c.x, lotBase, c.z, 0, -c.angle, 0);
-    const place = (list: Matrix[], x: number, y: number, z: number) => list.push(compose(x, y, z).multiply(car));
-    place(lists.body, 0, 0, 0);
-    for (const fx of [-1.38, 1.38]) for (const fz of [-0.8, 0.8]) place(lists.wheels, fx, 0.33, fz);
-    place(lists.head, 2.15, 0.6, -0.58); place(lists.head, 2.15, 0.6, 0.58);
-    place(lists.tail, -2.16, 0.68, -0.6); place(lists.tail, -2.16, 0.68, 0.6);
-  }
-  const colors = cars.map((c) => c.color);
-  shadows(instanced('car-body', lower, scene, paint, lists.body, group, colors), true, true);
-  shadows(instanced('car-roof', roofShape, scene, paint, lists.body, group, colors), true, false);
-  shadows(instanced('car-glass', glassShape, scene, pbr(scene, 'car-glass', { color: 0x1c252e, roughness: 0.08, metalness: 0.6 }), lists.body, group), true, false);
-  shadows(instanced('car-wheels', wheel, scene, pbr(scene, 'car-wheel', { color: 0x18181a, roughness: 0.85 }), lists.wheels, group), true, false);
-  shadows(instanced('car-hubs', hub, scene, pbr(scene, 'car-hub', { color: 0xb9bcc0, roughness: 0.35, metalness: 0.7 }), lists.wheels, group), false, false);
-  shadows(instanced('car-head', light, scene, pbr(scene, 'car-head', { color: 0xf4f1e4, emissive: 0x3a382e, roughness: 0.2 }), lists.head, group), false, false);
-  shadows(instanced('car-tail', light, scene, pbr(scene, 'car-tail', { color: 0xa3141b, emissive: 0x2a0204, roughness: 0.3 }), lists.tail, group), false, false);
+  const paint = pbr(scene, 'car-paint', { color: 0xffffff, roughness: 0.38, metalness: 0.25 });
+  paint.clearCoat.isEnabled = true; paint.clearCoat.intensity = 0.85; paint.clearCoat.roughness = 0.08;
+  const glass = pbr(scene, 'car-glass', { color: 0x141a20, roughness: 0.05, metalness: 0.4 });
+  const trim = pbr(scene, 'car-trim', { color: 0x202124, roughness: 0.7 });
+  const tire = pbr(scene, 'car-tire', { color: 0x161617, roughness: 0.9 });
+  const rim = pbr(scene, 'car-rim', { color: 0xc4c7cb, roughness: 0.3, metalness: 0.85 });
+  const head = pbr(scene, 'car-head', { color: 0xeef0f2, emissive: 0x2c2c28, roughness: 0.1, metalness: 0.3 });
+  const tail = pbr(scene, 'car-tail', { color: 0x9a1016, emissive: 0x2a0204, roughness: 0.25 });
+  const jitter = (seed: number, k: number) => { const t = Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453; return t - Math.floor(t) - 0.5; };
+
+  specs.forEach((spec, kind) => {
+    const list = cars.filter((c) => (c.kind ?? 1) === kind);
+    if (!list.length) return;
+    const { length: L, width: W, wheelbase, wheel: R, belt } = spec;
+    const top = spec.glass[1][1];
+    const body = sculpt(profile(spec.body, W), L, belt - 0.25, belt + 0.1, 0.94);
+    const greenhouse = sculpt(profile(spec.glass, W * 0.9, 0.02), L, belt, top, 0.84, 0.25);
+    const roof = sculpt(profile(spec.roof, W * 0.79, 0.02), L, top, top + 0.06, 0.97, 0.2);
+    const bumpers = merge([translate(box(0.16, 0.2, W * 0.9), L / 2 - 0.04, 0.38 + (R - 0.31), 0), translate(box(0.16, 0.2, W * 0.9), -L / 2 + 0.04, 0.4 + (R - 0.31), 0)]);
+    const skirts = merge([-1, 1].map((s) => translate(box(wheelbase - R * 2.1, 0.1, 0.06), 0, R + 0.02, s * (W / 2 - 0.01))));
+    const mirrors = merge([-1, 1].map((s) => translate(box(0.12, 0.1, 0.2), spec.glass[0][0] - 0.12, belt + 0.1, s * (W / 2 + 0.06))));
+    const tireGeo = rotateX(cylinder(R, R, 0.22, 18), Math.PI / 2);
+    const rimGeo = rotateX(cylinder(R * 0.64, R * 0.64, 0.232, 12), Math.PI / 2);
+    const lamp = box(0.05, 0.1, W * 0.26);
+    const lists = { body: [] as Matrix[], wheels: [] as Matrix[], head: [] as Matrix[], tail: [] as Matrix[] };
+    for (const c of list) {
+      const seed = c.seed ?? c.x * 7 + c.z * 13;
+      // Ninguém estaciona perfeito: pequenos desvios de posição e ângulo dentro da vaga.
+      const car = compose(c.x, lotBase, c.z, 0, -(c.angle + jitter(seed, 1) * 0.05), 0);
+      const local = compose(jitter(seed, 2) * 0.3, 0, jitter(seed, 3) * 0.16).multiply(car);
+      const place = (target: Matrix[], x: number, y: number, z: number) => target.push(compose(x, y, z).multiply(local));
+      place(lists.body, 0, 0, 0);
+      for (const fx of [-wheelbase / 2, wheelbase / 2]) for (const fz of [-1, 1]) place(lists.wheels, fx, R, fz * (W / 2 - 0.13));
+      for (const fz of [-1, 1]) { place(lists.head, L / 2 - 0.02, 0.66 + (R - 0.31), fz * W * 0.3); place(lists.tail, -L / 2 + 0.02, 0.72 + (R - 0.31), fz * W * 0.32); }
+    }
+    const colors = list.map((c) => c.color);
+    const name = (part: string) => `car-${kind}-${part}`;
+    shadows(instanced(name('body'), body, scene, paint, lists.body, group, colors), true, true);
+    shadows(instanced(name('roof'), roof, scene, paint, lists.body, group, colors), true, false);
+    shadows(instanced(name('mirrors'), mirrors, scene, paint, lists.body, group, colors), false, false);
+    shadows(instanced(name('glass'), greenhouse, scene, glass, lists.body, group), true, false);
+    shadows(instanced(name('trim'), merge([bumpers, skirts]), scene, trim, lists.body, group), false, false);
+    shadows(instanced(name('tires'), tireGeo, scene, tire, lists.wheels, group), true, false);
+    shadows(instanced(name('rims'), rimGeo, scene, rim, lists.wheels, group), false, false);
+    shadows(instanced(name('head'), lamp, scene, head, lists.head, group), false, false);
+    shadows(instanced(name('tail'), lamp, scene, tail, lists.tail, group), false, false);
+  });
   return group;
 }

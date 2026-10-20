@@ -23,6 +23,8 @@ export interface GroundMap {
   classes: Uint8Array;
   /** Faixas pintadas sobre o asfalto: 0 nenhuma, 1 amarela, 2 branca. */
   marks: Uint8Array;
+  /** 1 onde fica a torre e a calçada em volta dela (não recebe vaga). */
+  plaza?: Uint8Array;
 }
 
 function hsv(r: number, g: number, b: number) {
@@ -196,7 +198,31 @@ function absorbParkingPads(classes: Uint8Array, art: Uint8Array, w: number, h: n
   }
 }
 
-export function classifyGround(canvas: HTMLCanvasElement, lot: Point[], metersPerPixel: number, stalls: Stall[] = [], erased?: Uint8Array): GroundMap {
+/** Projeção de uma torre na arte: centro em pixels, largura e profundidade em metros, ângulo da largura. */
+export interface Footprint { x: number; y: number; width: number; depth: number; angle: number }
+
+/**
+ * Faixa pintada é traço fino (até ~35 cm de largura média e ao menos 0,8 m de comprimento): manchas claras largas
+ * que sobraram no asfalto (calçada absorvida, rótulo da arte) não viram tinta.
+ */
+function keepThinMarks(marks: Uint8Array, w: number, h: number, metersPerPixel: number) {
+  const seen = new Uint8Array(w * h); const stack: number[] = []; const pixels: number[] = [];
+  for (let start = 0; start < w * h; start++) {
+    if (!marks[start] || seen[start]) continue;
+    stack.push(start); seen[start] = 1; pixels.length = 0;
+    let minX = w, maxX = 0, minY = h, maxY = 0;
+    while (stack.length) {
+      const i = stack.pop()!; pixels.push(i); const x = i % w; const y = (i - x) / w;
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) if (j >= 0 && j < w * h && marks[j] && !seen[j]) { seen[j] = 1; stack.push(j); }
+    }
+    const span = Math.hypot(maxX - minX + 1, maxY - minY + 1) * metersPerPixel;
+    const width = (pixels.length * metersPerPixel * metersPerPixel) / span;
+    if (width > 0.35 || span < 0.8) for (const i of pixels) marks[i] = 0;
+  }
+}
+
+export function classifyGround(canvas: HTMLCanvasElement, lot: Point[], metersPerPixel: number, stalls: Stall[] = [], erased?: Uint8Array, footprints: Footprint[] = []): GroundMap {
   const xs = lot.map((p) => p[0]); const ys = lot.map((p) => p[1]);
   const x0 = Math.max(0, Math.floor(Math.min(...xs))); const y0 = Math.max(0, Math.floor(Math.min(...ys)));
   const w = Math.min(canvas.width, Math.ceil(Math.max(...xs))) - x0; const h = Math.min(canvas.height, Math.ceil(Math.max(...ys))) - y0;
@@ -223,6 +249,42 @@ export function classifyGround(canvas: HTMLCanvasElement, lot: Point[], metersPe
   // Pixels de carro e sombra apagados: reconstruídos pela continuação dos lados (calçada segue calçada).
   if (erased) inpaint(raw, w, h, (i) => erased[(Math.floor(i / w) + y0) * canvas.width + (i % w) + x0] === 1 && inside[i * 4 + 3] >= 128);
   const art = new Uint8Array(raw);
+  // Torres: a projeção do prédio e a calçada clara em volta (medida na arte, lado a lado) são piso elevado.
+  // Sem isso o telhado cinza da arte puxa a calçada para o asfalto e ela vira "faixa pintada" branca.
+  const plaza = new Uint8Array(w * h);
+  if (footprints.length) {
+    const m = 1 / metersPerPixel;
+    const artAt = (x: number, y: number) => { const gx = Math.round(x) - x0, gy = Math.round(y) - y0; return gx < 0 || gy < 0 || gx >= w || gy >= h ? Ground.Outside : art[gy * w + gx]; };
+    // Claro e neutro: calçada. O bege quente do fundo das vagas encerra a calçada.
+    const light = (k: number, x: number, y: number) => {
+      if (k !== Ground.Paving && k !== Ground.Other && k !== Ground.Warm) return false;
+      const gx = Math.round(x) - x0, gy = Math.round(y) - y0; const i = (gy * w + gx) * 4;
+      return !(k === Ground.Paving && data[i] - data[i + 2] >= 18);
+    };
+    mctx.clearRect(0, 0, w, h); mctx.fillStyle = '#000';
+    for (const f of footprints) {
+      const ux = Math.cos(f.angle), uy = Math.sin(f.angle), vx = -uy, vy = ux;
+      const hw = f.width / 2, hd = f.depth / 2;
+      // Margem de calçada por lado (+u, −u, +v, −v): até onde a arte continua clara, no máximo 6 m.
+      const margins = ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).map(([su, sv]) => {
+        const nx = su * ux + sv * vx, ny = su * uy + sv * vy; const tx = su ? vx : ux, ty = su ? vy : uy;
+        const along = su ? hd : hw; const out = su ? hw : hd; const found: number[] = [];
+        for (let a = -along + 0.5; a <= along - 0.5; a += 1) {
+          const at = (d: number) => { const x = f.x + (nx * (out + d) + tx * a) * m, y = f.y + (ny * (out + d) + ty * a) * m; return light(artAt(x, y), x, y); };
+          let d = 0; while (d < 2 && !at(d)) d += 0.16; // telhado da arte maior que o modelo
+          while (d < 4.5 && at(d)) d += 0.16;
+          found.push(d);
+        }
+        found.sort((p, q) => p - q);
+        return Math.max(0.6, Math.min(4.5, found[found.length >> 1] ?? 0.6));
+      });
+      mctx.save(); mctx.translate(f.x - x0, f.y - y0); mctx.rotate(f.angle);
+      mctx.fillRect((-hw - margins[1]) * m, (-hd - margins[3]) * m, (2 * hw + margins[0] + margins[1]) * m, (2 * hd + margins[2] + margins[3]) * m);
+      mctx.restore();
+    }
+    const pm = mctx.getImageData(0, 0, w, h).data;
+    for (let i = 0; i < w * h; i++) if (pm[i * 4 + 3] > 127 && inside[i * 4 + 3] >= 128) { plaza[i] = 1; raw[i] = Ground.Paving; }
+  }
   // Nas vagas, carro e sombra ("outro") viram asfalto; calçada e canteiro desenhados na arte ficam.
   const isStall = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) if (forced(i) && (raw[i] === Ground.Other || raw[i] === Ground.Asphalt)) { raw[i] = Ground.Asphalt; isStall[i] = 1; }
@@ -256,14 +318,15 @@ export function classifyGround(canvas: HTMLCanvasElement, lot: Point[], metersPe
   const maxIsland = (kind: number) => (kind === Ground.Paving || kind === Ground.Other ? Math.round(80 / m2) : kind === Ground.Asphalt ? Math.round(120 / m2) : 0);
   removeSpecks(classes, w, h, minPixels, maxIsland);
   classes = modeFilter(classes, w, h, Math.max(5, Math.round(1.4 / metersPerPixel) | 1), kinds.slice(0, 4));
-  for (let i = 0; i < w * h; i++) if (isStall[i]) classes[i] = Ground.Asphalt;
+  for (let i = 0; i < w * h; i++) if (isStall[i]) classes[i] = Ground.Asphalt; else if (plaza[i]) classes[i] = Ground.Paving;
   straightenEdges(classes, w, h, Math.round(2.2 / metersPerPixel));
   for (let i = 0; i < w * h; i++) if (isStall[i]) classes[i] = Ground.Asphalt;
   removeSpecks(classes, w, h, minPixels, maxIsland);
 
-  // Canteiros/faixas estreitas de piso no meio do estacionamento viram asfalto (fileiras limpas de vagas).
-  absorbNarrowPaving(classes, w, h, 5 / metersPerPixel, Math.round(600 / m2));
-  for (let i = 0; i < w * h; i++) if (isStall[i]) classes[i] = Ground.Asphalt;
+  // Canteiros/faixas estreitas de piso no meio do estacionamento viram asfalto quando as vagas já vêm
+  // prontas; sem elas (vagas planejadas depois), a faixa atrás das vagas é o meio-fio e fica.
+  if (stalls.length) absorbNarrowPaving(classes, w, h, 5 / metersPerPixel, Math.round(600 / m2));
+  for (let i = 0; i < w * h; i++) if (isStall[i]) classes[i] = Ground.Asphalt; else if (plaza[i]) classes[i] = Ground.Paving;
 
   // Faixas pintadas: traços claros ou amarelos que a suavização absorveu no asfalto.
   const marks = new Uint8Array(w * h);
@@ -272,7 +335,8 @@ export function classifyGround(canvas: HTMLCanvasElement, lot: Point[], metersPe
     if (art[i] === Ground.Warm) marks[i] = 1;
     else if (art[i] === Ground.Paving && lum[i] > 165) marks[i] = 2;
   }
-  return { x0, y0, w, h, classes, marks };
+  keepThinMarks(marks, w, h, metersPerPixel);
+  return { x0, y0, w, h, classes, marks, plaza };
 }
 
 let seed = 1;
@@ -367,12 +431,17 @@ export function paintGround(art: HTMLCanvasElement, map: GroundMap, metersPerPix
   // Demarcação das vagas: linhas nas divisas de cada vaga da fileira (2,5 × 5 m), só sobre o asfalto.
   if (stalls.length) {
     lctx.globalCompositeOperation = 'source-over'; lctx.clearRect(0, 0, W, H);
-    lctx.strokeStyle = '#efcf6f'; lctx.lineWidth = 0.12 * pxPerMeter; lctx.lineCap = 'butt';
+    lctx.strokeStyle = '#f2ead2'; lctx.lineWidth = 0.1 * pxPerMeter; lctx.lineCap = 'butt';
     lctx.beginPath();
     for (const stall of stalls) {
       const cx = (stall.x - map.x0) * scale; const cy = (stall.y - map.y0) * scale;
-      const ux = Math.cos(stall.angle); const uy = Math.sin(stall.angle); const half = (stallLength / 2) * pxPerMeter; const side = 1.25 * pxPerMeter;
-      for (const k of [-1, 1]) { lctx.moveTo(cx - ux * half - uy * side * k, cy - uy * half + ux * side * k); lctx.lineTo(cx + ux * half - uy * side * k, cy + uy * half + ux * side * k); }
+      const ux = Math.cos(stall.angle); const uy = Math.sin(stall.angle); const side = (stall.width / 2) * pxPerMeter;
+      // Linhas laterais da vaga, do meio-fio até 0,3 m antes do corredor.
+      const back = (stallLength / 2) * pxPerMeter; const front = (stallLength / 2 - 0.3) * pxPerMeter; const dir = stall.curb || 1;
+      for (const k of [-1, 1]) {
+        lctx.moveTo(cx + ux * back * dir - uy * side * k, cy + uy * back * dir + ux * side * k);
+        lctx.lineTo(cx - ux * front * dir - uy * side * k, cy - uy * front * dir + ux * side * k);
+      }
     }
     lctx.stroke();
     const image = mctx.createImageData(map.w, map.h);
@@ -385,6 +454,38 @@ export function paintGround(art: HTMLCanvasElement, map: GroundMap, metersPerPix
   return { canvas: out, scale };
 }
 
+/**
+ * Depois de planejadas as vagas: cada vaga vira asfalto inteiro (sem restos de carro ou sombra da arte)
+ * e manchas de piso pequenas, compactas e cercadas de asfalto somem. Faixas longas (canteiro entre
+ * fileiras, calçada) ficam.
+ */
+export function settleStalls(map: GroundMap, stalls: Stall[], metersPerPixel: number) {
+  const { w, h, classes, marks } = map;
+  const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  traceStalls(ctx, stalls, metersPerPixel, map.x0, map.y0, 1, 0.05);
+  const mask = ctx.getImageData(0, 0, w, h).data;
+  for (let i = 0; i < w * h; i++) if (mask[i * 4 + 3] > 127 && classes[i] !== Ground.Outside) { classes[i] = Ground.Asphalt; marks[i] = 0; }
+  const m2 = metersPerPixel * metersPerPixel; const m = 1 / metersPerPixel;
+  const seen = new Uint8Array(w * h); const stack: number[] = []; const pixels: number[] = [];
+  for (let start = 0; start < w * h; start++) {
+    const kind = classes[start];
+    if (seen[start] || (kind !== Ground.Paving && kind !== Ground.Other)) continue;
+    stack.push(start); seen[start] = 1; pixels.length = 0;
+    let minX = w, maxX = 0, minY = h, maxY = 0, asphalt = 0, border = 0;
+    while (stack.length) {
+      const i = stack.pop()!; pixels.push(i); const x = i % w; const y = (i - x) / w;
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) {
+        if (j < 0 || j >= w * h) continue;
+        if (classes[j] === kind) { if (!seen[j]) { seen[j] = 1; stack.push(j); } }
+        else if (classes[j] !== Ground.Outside) { border++; if (classes[j] === Ground.Asphalt) asphalt++; }
+      }
+    }
+    const area = pixels.length * m2; const span = Math.max(maxX - minX + 1, maxY - minY + 1) / m; const ratio = asphalt / Math.max(1, border);
+    if (area < 6 && ratio > 0.5 || area < 45 && span < 7 && ratio > 0.7) for (const i of pixels) classes[i] = Ground.Asphalt;
+  }
+}
 /** Superfície elevada (calçada, canteiro, gramado, deck): tudo que não é asfalto. */
 const raised = (c: number) => c === Ground.Grass || c === Ground.Paving || c === Ground.Other;
 

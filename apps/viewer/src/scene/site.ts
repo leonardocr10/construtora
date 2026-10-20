@@ -2,7 +2,7 @@ import { DynamicTexture, TransformNode, Vector3, type Scene } from './babylon';
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
 import { buildCars, detectCars } from './lot-relief';
-import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, paintGround, type GroundMap } from './ground';
+import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, paintGround, settleStalls, type Footprint, type GroundMap } from './ground';
 import { buildAmenities } from './amenities';
 import { planParking } from './parking';
 import { buildPalms, buildTrees } from './trees';
@@ -156,40 +156,27 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
         const canvas = eraseMarkers(image, markers, layout.markerRadius ?? Math.round(layout.imageWidth * 0.0145));
         // Carros desenhados viram volumes 3D; o asfalto fica rebaixado em relação às calçadas e gramados.
         // Carros agrupados em fileiras alinhadas, com todas as vagas da fileira demarcadas.
+        const original = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, canvas.width, canvas.height);
         const erased = new Uint8Array(canvas.width * canvas.height);
-        const parking = planParking(detectCars(canvas, layout.lot!, layout.metersPerPixel, erased), layout.metersPerPixel);
+        const detected = detectCars(canvas, layout.lot!, layout.metersPerPixel, erased);
         // Chão modelado: asfalto, grama e piso redesenhados e calçadas/canteiros com meio-fio de verdade.
-        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, parking.stalls, erased);
+        const towerFootprints: Footprint[] = development.buildings.filter((b) => b.position).map((b) => ({
+          x: b.position!.x / layout.metersPerPixel + layout.origin[0], y: b.position!.z / layout.metersPerPixel + layout.origin[1],
+          width: b.model3d?.width ?? 30, depth: b.model3d?.depth ?? 16, angle: ((b.position!.rotation ?? 0) * Math.PI) / 180,
+        }));
+        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, [], erased, towerFootprints);
+        // Fileiras de vagas encostadas no meio-fio, completas, e ocupadas conforme a arte.
+        const parking = planParking(detected, ground, original, layout.metersPerPixel);
+        settleStalls(ground, parking.stalls, layout.metersPerPixel);
         const painted = paintGround(canvas, ground, layout.metersPerPixel, parking.stalls);
         // Áreas de lazer em 3D, a partir do nome e da arte em volta de cada marcador.
         buildAmenities(scene, group, canvas, layout.lot!, development.amenities, layout.metersPerPixel, layout.origin, (p) => pixelToSite(layout, p), asphaltLevel + curbHeight);
-        // Carro só onde o chão ficou asfalto (sombra de árvore no gramado não vira carro).
-        const onAsphalt = (car: { x: number; y: number }) => {
-          const gx = Math.round(car.x) - ground.x0; const gy = Math.round(car.y) - ground.y0;
-          return gx >= 0 && gy >= 0 && gx < ground.w && gy < ground.h && ground.classes[gy * ground.w + gx] === 1;
-        };
-        // O carro inteiro precisa caber no lote, longe do muro: se encostar, desliza no próprio eixo até caber.
-        const m = 1 / layout.metersPerPixel; const lotPx = layout.lot!;
-        const clearOfWall = (x: number, y: number) => lotPx.every((a, i) => {
-          const b = lotPx[(i + 1) % lotPx.length]; const dx = b[0] - a[0], dy = b[1] - a[1]; const l2 = dx * dx + dy * dy || 1;
-          const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2));
-          return Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy)) > 0.35 * m;
-        });
-        const fits = (x: number, y: number, angle: number) => {
-          const ux = Math.cos(angle), uy = Math.sin(angle);
-          return [[-2.25, -0.95], [2.25, -0.95], [2.25, 0.95], [-2.25, 0.95]].every(([l, w]) => {
-            const px = x + (ux * l - uy * w) * m, py = y + (uy * l + ux * w) * m;
-            return insidePolygon([px, py], lotPx) && clearOfWall(px, py);
-          });
-        };
-        const placed = parking.cars.filter(onAsphalt).flatMap((car) => {
-          for (const shift of [0, 0.5, -0.5, 1, -1, 1.5, -1.5]) {
-            const x = car.x + Math.cos(car.angle) * shift * m, y = car.y + Math.sin(car.angle) * shift * m;
-            if (fits(x, y, car.angle)) return [{ ...car, x, y }];
-          }
-          return [];
-        });
-        buildCars(scene, group, placed.map((car) => { const [x, z] = pixelToSite(layout, [car.x, car.y]); return { x, z, angle: car.angle, color: car.color }; }));
+        // Um carro em cada vaga ocupada, no centro dela, com a frente para o meio-fio (ou de ré).
+        buildCars(scene, group, parking.stalls.filter((stall) => stall.car).map((stall) => {
+          const [x, z] = pixelToSite(layout, [stall.x, stall.y]);
+          const nose = (stall.curb || 1) * (stall.car!.reversed ? -1 : 1);
+          return { x, z, angle: stall.angle + (nose < 0 ? Math.PI : 0), color: stall.car!.color, kind: stall.car!.kind, seed: stall.x * 7 + stall.y * 13 };
+        }));
         const meshes = buildGroundMesh(ground, (p) => pixelToSite(layout, p), { u: (px) => (px - ground.x0) / ground.w, v: (py) => 1 - (py - ground.y0) / ground.h });
         const texture = new DynamicTexture('lot-art', painted.canvas, scene, true);
         texture.anisotropicFilteringLevel = 16;
