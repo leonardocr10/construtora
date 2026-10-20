@@ -272,7 +272,14 @@ model Building {
   code          String
   sortOrder     Int                @default(0)
   imageAssetId  String?
+  /// Posição no terreno em metros: { x, z, rotation (graus) }.
   position      Json?
+  /// Pavimentos residenciais (térreo incluso) usados pelo gerador 3D.
+  floorCount    Int?
+  unitsPerFloor Int?
+  floorHeight   Decimal?           @db.Decimal(5, 2)
+  /// Volumetria: { width, depth, colors: { facade, accent, roof }, unitSlots: [{ final, side, column }] }.
+  model3d       Json?
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   development   Development        @relation(fields: [developmentId], references: [id], onDelete: Restrict)
@@ -371,6 +378,9 @@ model Amenity {
   name          String
   description   String?        @db.Text
   sortOrder     Int            @default(0)
+  /// Número do marcador na implantação e posição no terreno em metros { x, z }.
+  marker        Int?
+  position      Json?
   development   Development    @relation(fields: [developmentId], references: [id], onDelete: Restrict)
   media         AmenityMedia[]
   regionLinks   RegionLink[]

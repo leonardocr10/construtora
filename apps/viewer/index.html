@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VistaHub · explorar em 3D</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <div id="stage"></div>
+    <div id="labels"></div>
+    <header class="brand card" id="brand"></header>
+    <nav class="actions" id="actions"></nav>
+    <nav class="crumbs card hidden" id="crumbs"></nav>
+    <aside class="panel left hidden" id="tower-panel"></aside>
+    <aside class="panel right hidden" id="mirror-panel"></aside>
+    <aside class="panel right2 hidden" id="unit-panel"></aside>
+    <aside class="panel left hidden" id="amenities-panel"></aside>
+    <div class="hint" id="hint">
+      <b>Clique numa torre para conhecer os apartamentos</b>
+      <span>Arraste para girar, botão direito para mover, roda para aproximar. Esc volta.</span>
+    </div>
+    <footer class="towers card" id="tower-bar"></footer>
+    <div class="credits">
+      <div class="card chip" id="sources"></div>
+      <a class="osm" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© colaboradores do OpenStreetMap (ODbL)</a>
+    </div>
+    <div class="caption hidden" id="caption"></div>
+    <div class="modal hidden" id="modal"><div class="modal-box" id="modal-box"></div></div>
+    <div class="loading" id="loading"><div class="spinner"></div><p id="loading-text">Preparando a maquete 3D</p></div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

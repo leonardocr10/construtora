@@ -14,6 +14,13 @@ class BuildingDto implements BuildingInput {
   @IsString() @MaxLength(40) code!: string;
   @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
   @IsOptional() @IsString() imageAssetId?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) floorCount?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) unitsPerFloor?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(2) floorHeight?: number;
+  /** Posição no terreno em metros: { x, z, rotation }. */
+  @IsOptional() @IsObject() position?: object;
+  /** Volumetria: { width, depth, colors, unitSlots }. */
+  @IsOptional() @IsObject() model3d?: object;
 }
 class FloorDto implements FloorInput {
   @IsString() @MaxLength(80) name!: string;

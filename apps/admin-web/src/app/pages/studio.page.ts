@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
-import { ApiService, ModelVersion, errorMessage } from '../core/api.service';
+import { ApiService, ModelVersion, VIEWER_URL, errorMessage } from '../core/api.service';
 import { DevelopmentContext } from '../core/development-context';
 import { bytes, dateTime, val } from '../core/labels';
 
@@ -10,6 +10,14 @@ import { bytes, dateTime, val } from '../core/labels';
       <div class="head"><div><h1>Estúdio 3D</h1><p class="sub">Gerencie as versões do modelo tridimensional e a configuração do visualizador.</p></div></div>
       @if (error()) { <div class="notice error">{{ error() }}</div> }
       @if (message()) { <div class="notice ok">{{ message() }}</div> }
+      <div class="card shadow" style="margin-bottom:18px"><div class="pad" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <div style="flex:1;min-width:260px"><h3>Maquete 3D paramétrica</h3>
+          <p class="small">Gerada automaticamente a partir da implantação, das torres (pavimentos, apartamentos por andar e posição) e do entorno real do OpenStreetMap. O espelho de vendas atualiza as cores em tempo real.</p>
+          @if (dev(); as d) { @if (d.status !== 'PUBLISHED') { <p class="small"><b>O visualizador público só abre empreendimentos publicados.</b> Status atual: {{ d.status }}.</p> } }
+        </div>
+        @if (dev(); as d) { <a class="btn blue" [href]="viewerUrl + '/' + d.slug" target="_blank" rel="noopener">Abrir visualizador 3D</a> }
+        <button class="btn soft" [disabled]="busy()" (click)="refreshSurroundings()">Atualizar entorno (OSM)</button>
+      </div></div>
       <div class="three">
         <div class="card shadow"><div class="pad"><h3>Versões do modelo</h3>
           @for (m of models(); track m.id) {
@@ -63,6 +71,8 @@ export class StudioPage {
   readonly scale = signal(1); readonly rotationY = signal(0); readonly light = signal(80);
   readonly camera = signal('Perspectiva aérea'); readonly autoRotate = signal(false);
   readonly busy = signal(false);
+  readonly viewerUrl = VIEWER_URL;
+  readonly dev = signal<{ slug: string; status: string } | null>(null);
   readonly error = signal<string | null>(null);
   readonly message = signal<string | null>(null);
 
@@ -71,7 +81,10 @@ export class StudioPage {
   pick(event: Event) { this.file.set((event.target as HTMLInputElement).files?.[0] ?? null); }
 
   async load() {
-    try { this.models.set(await this.api.get<ModelVersion[]>(`/developments/${this.id()}/models`)); }
+    try {
+      this.models.set(await this.api.get<ModelVersion[]>(`/developments/${this.id()}/models`));
+      this.dev.set(await this.api.get<{ slug: string; status: string }>(`/developments/${this.id()}`));
+    }
     catch (error) { this.error.set(errorMessage(error)); }
   }
 
@@ -90,6 +103,13 @@ export class StudioPage {
       await this.api.upload(`/developments/${this.id()}/assets`, form);
       this.file.set(null); this.label.set('');
       return 'Modelo importado.';
+    });
+  }
+
+  refreshSurroundings() {
+    void this.run(async () => {
+      const r = await this.api.post<{ roads: number; buildings: number; green: number }>(`/developments/${this.id()}/surroundings/refresh`, {});
+      return `Entorno atualizado: ${r.roads} vias, ${r.buildings} edificações e ${r.green} áreas verdes.`;
     });
   }
 

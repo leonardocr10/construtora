@@ -2,6 +2,8 @@ import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
 export const API_URL = 'http://localhost:3000/api/v1';
+/** Visualizador 3D público (apps/viewer). */
+export const VIEWER_URL = 'http://localhost:4300';
 
 export type DevelopmentStatus = 'DRAFT' | 'PREPARING' | 'PUBLISHED' | 'ARCHIVED';
 export type UnitStatus = 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'BLOCKED' | 'UNAVAILABLE';

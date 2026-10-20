@@ -5,7 +5,7 @@ import { PrismaService } from '../common/prisma.service';
 import { assertCanEdit, assertCommercial } from '../common/roles';
 
 type Db = Prisma.TransactionClient;
-export interface BuildingInput { name: string; code: string; sortOrder?: number; imageAssetId?: string; }
+export interface BuildingInput { name: string; code: string; sortOrder?: number; imageAssetId?: string; floorCount?: number; unitsPerFloor?: number; floorHeight?: number; position?: Prisma.InputJsonValue; model3d?: Prisma.InputJsonValue; }
 export interface FloorInput { name: string; number: number; sortOrder?: number; }
 export interface UnitInput { number: string; floorId?: string; unitTypeId?: string; final?: string; status?: UnitStatus; privateArea?: number; totalArea?: number; price?: number; }
 export interface FloorPlanInput { name: string; code?: string; area?: number; bedrooms?: number; suites?: number; bathrooms?: number; parkingSpaces?: number; description?: string; }

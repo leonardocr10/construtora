@@ -81,6 +81,7 @@ if errorlevel 1 goto :failed
 echo Abrindo API e painel...
 start "VistaHub API" /D "%~dp0" cmd /k npm run dev:api
 start "VistaHub Painel" /D "%~dp0" cmd /k npm run dev:admin
+start "VistaHub Visualizador 3D" /D "%~dp0" cmd /k npm run dev:viewer
 
 echo Aguardando a API responder...
 powershell -NoProfile -Command "for($i=0;$i -lt 60;$i++){ try { Invoke-WebRequest -UseBasicParsing http://localhost:3000/api/v1/health/db -TimeoutSec 2 | Out-Null; exit 0 } catch { Start-Sleep 2 } }; exit 1"
@@ -92,6 +93,7 @@ if errorlevel 1 (echo [AVISO] O painel ainda nao respondeu. Veja a janela "Vista
 
 echo.
 echo Servicos iniciados. Painel: http://localhost:4200
+echo Visualizador 3D: http://localhost:4300/union-vista
 echo Documentacao da API: http://localhost:3000/api/docs
 exit /b 0
 
