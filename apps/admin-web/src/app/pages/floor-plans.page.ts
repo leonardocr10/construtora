@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { ApiService, FloorPlan, errorMessage } from '../core/api.service';
 import { DevelopmentContext } from '../core/development-context';
 import { area, val } from '../core/labels';
@@ -8,6 +9,7 @@ const empty: Form = { name: '', code: '', area: '', bedrooms: '', suites: '', ba
 const numeric = ['area', 'bedrooms', 'suites', 'bathrooms', 'parkingSpaces'] as const;
 
 @Component({
+  imports: [RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="content">
@@ -40,6 +42,7 @@ const numeric = ['area', 'bedrooms', 'suites', 'bathrooms', 'parkingSpaces'] as 
             <h3 style="margin-top:10px">{{ p.name }}</h3>
             <p>{{ p.bedrooms ?? 0 }} quartos · {{ p.suites ?? 0 }} suíte(s) · {{ p.bathrooms ?? 0 }} banheiros · {{ p.parkingSpaces ?? 0 }} vaga(s)</p>
             <p class="small">{{ area(p.area) }} · {{ p._count.units }} unidade(s) vinculada(s) · {{ p.assets.length }} arquivo(s)</p>
+            <a class="btn soft" [routerLink]="['/empreendimentos', id(), 'plantas', p.id, 'vetorizar']">{{ p.layout ? '✎ Editar planta 3D' : '⬚ Vetorizar planta' }}</a>
           </div></div>
         }
       </div>

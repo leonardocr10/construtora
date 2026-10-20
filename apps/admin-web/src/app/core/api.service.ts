@@ -26,7 +26,7 @@ export interface Building {
   floorCount: number | null; unitsPerFloor: number | null; floorHeight: string | number | null;
   position: { x: number; z: number; rotation?: number } | null; model3d: Building3D | null;
 }
-export interface FloorPlan { id: string; name: string; code: string | null; area: string | number | null; bedrooms: number | null; suites: number | null; bathrooms: number | null; parkingSpaces: number | null; description: string | null; assets: { id: string; kind: AssetKind; originalName: string }[]; _count: { units: number }; }
+export interface FloorPlan { id: string; name: string; code: string | null; area: string | number | null; bedrooms: number | null; suites: number | null; bathrooms: number | null; parkingSpaces: number | null; description: string | null; layout?: unknown; assets: { id: string; kind: AssetKind; originalName: string }[]; _count: { units: number }; }
 export interface Unit {
   id: string; buildingId: string; floorId: string | null; number: string; final: string | null; status: UnitStatus;
   privateArea: string | number | null; totalArea: string | number | null; price: string | number | null;
@@ -72,6 +72,12 @@ export class ApiService {
   patch<T>(path: string, body: unknown) { return this.request<T>('PATCH', path, body); }
   put<T>(path: string, body: unknown) { return this.request<T>('PUT', path, body); }
   upload<T>(path: string, form: FormData) { return this.request<T>('POST', path, form); }
+  /** Arquivo privado (ex.: imagem da planta) com o token da sessão. */
+  async blob(path: string) {
+    const response = await fetch(API_URL + path, { headers: this.token() ? { authorization: `Bearer ${this.token()}` } : {} });
+    if (!response.ok) throw new ApiError(`Erro ${response.status} ao carregar o arquivo`, response.status);
+    return response.blob();
+  }
 
   private async request<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
     const headers: Record<string, string> = {};
