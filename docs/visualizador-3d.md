@@ -1,6 +1,6 @@
 # Visualizador 3D paramétrico
 
-O visualizador público (`apps/viewer`, Vite + Three.js) monta a maquete do empreendimento em tempo real a partir dos dados do banco. Não depende de um modelo 3D pronto: a maquete é gerada a partir de parâmetros.
+O visualizador público (`apps/viewer`, Vite + Babylon.js) monta a maquete do empreendimento em tempo real a partir dos dados do banco. Não depende de um modelo 3D pronto: a maquete é gerada a partir de parâmetros.
 
 ## De onde vem cada parte
 
@@ -111,6 +111,46 @@ Tudo abaixo sai da arte da implantação e do cadastro, sem ajuste por empreendi
 
 No visualizador, o botão **Ocultar números** (barra de vistas) esconde os marcadores do lazer, e a escolha fica salva no navegador.
 
+## Motor 3D: Babylon.js com WebGPU
+
+O visualizador saiu do Three.js 0.169 para o **Babylon.js 9** (`@babylonjs/core`, licença Apache-2.0, importado por módulo em `scene/babylon.ts` para o pacote ficar só com o que é usado). Nenhuma API paga nem asset externo: o ambiente de reflexos é gerado em código.
+
+### Por que Babylon
+
+| | Three.js | Babylon.js |
+|---|---|---|
+| WebGPU | `WebGPURenderer` separado, com outro sistema de materiais (TSL); o pós-processamento clássico não funciona nele | O mesmo código roda em WebGPU e WebGL2; shaders em WGSL nativo para PBR, sombras e pós-processos |
+| Sombras | Mapa único que seguia o alvo da câmera | Sombras em cascata (CSM) com PCF suave e cascatas estabilizadas |
+| Pós-processamento | Composer montado à mão (GTAO, SMAA, Output) | `DefaultRenderingPipeline` (MSAA, FXAA, ACES, exposição) + `SSAO2RenderingPipeline` |
+| Instâncias | `InstancedMesh` | Instâncias finas (uma chamada de desenho, picking e sombra incluídos) |
+| Câmera | `OrbitControls` (exemplo) | `ArcRotateCamera` do núcleo, com inércia, limites e pan no plano do chão |
+
+### WebGPU e recuo para WebGL2
+
+`scene/engine.ts` testa `WebGPUEngine.IsSupportedAsync`; com WebGPU disponível (Chrome/Edge 113+, Safari 26+, Firefox 141+ no Windows) cria o motor WebGPU, senão um `Engine` WebGL2 num canvas novo. `?motor=webgl` na URL força o WebGL2. O motor em uso aparece no selo do canto inferior esquerdo. Todos os shaders usados têm versão WGSL; o compilador GLSL→WGSL (glslang/twgsl, do CDN do Babylon) só seria baixado se algum shader GLSL entrasse na cena.
+
+### Coordenadas
+
+A cena usa `scene.useRightHandedSystem = true`: metros, x leste, z sul, norte = −z, grupo do lote girado por −azimute em torno de y (ver `docs/implantacao-geografica.md`). Por isso toda a matemática anterior (calibração, OSM, posições das torres) continua igual. As geometrias são montadas em `scene/geometry.ts` (caixa, cilindro, icosaedro, polígonos com earcut, extrusões, tubos), com triângulos anti-horários e `mesh.sideOrientation = 1`; as cores dos cadastros (sRGB) são convertidas para linear, como o PBR espera.
+
+### Níveis de qualidade
+
+| Nível | Sombras (mapa × cascatas, PCF) | SSAO2 | Antisserrilhado | Densidade máx. de pixels |
+|---|---|---|---|---|
+| Econômico | 1024 × 2, baixa | não | FXAA | 1 |
+| Equilibrado | 2048 × 3, média | ½ resolução, 8 amostras | MSAA 2× | 1,25 |
+| Alto | 2048 × 4, alta | ¾ resolução, 16 amostras | MSAA 4× | 1,5 |
+| Ultra | 4096 × 4, alta | resolução cheia, 32 amostras | MSAA 4× + FXAA | 2 |
+
+Sem escolha do visitante, o nível inicial vem do aparelho (`scene/quality.ts`): GPU por software → Econômico; celular/tablet (`navigator.userAgentData.mobile`, agente ou tela sensível ao toque pequena) → Econômico ou Equilibrado conforme núcleos e memória; computador → Alto (Equilibrado se modesto). Se a taxa ficar abaixo de 22 quadros por segundo por 5 s, o nível cai um degrau. O seletor **Qualidade** fica no painel de vistas e a escolha é lembrada no navegador.
+
+### Seleção de apartamento
+
+Ao escolher um andar, a torre é cortada acima dele e cada apartamento vira um volume translúcido na cor do status, com o **número** flutuando em cima (clicável). O escolhido fica laranja sólido. O painel do apartamento mostra status, torre/andar/final, área privativa, planta, quartos e suítes, banheiros, vagas e varanda (área dos cômodos "varanda" da planta vetorizada, quando houver), o valor só com `publicLayout.showPrices = true`, a **posição na torre** (planta da cobertura com lâminas, núcleo e apartamentos do andar, seta do norte real e pilha de pavimentos) e o rodapé com **Ver por dentro** (planta 3D mobiliada), **Ver planta** e **Ver vista**.
+
+### Antes e depois
+
+A maquete do Union Vista em WebGPU reproduz a do Three.js (mesma implantação, torres, lazer, carros, vegetação e entorno), com sombras em cascata mais nítidas perto da câmera e presentes ao longe, oclusão de ambiente e reflexos nos vidros.
 ## Licença dos dados do mapa
 
 Os dados do OpenStreetMap são livres sob a licença ODbL. O crédito "© colaboradores do OpenStreetMap" com link para https://www.openstreetmap.org/copyright precisa ficar visível no visualizador, e já está. As consultas ao Overpass ficam em cache, para respeitar a política de uso do serviço.
