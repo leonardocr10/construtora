@@ -17,6 +17,11 @@ export interface AmenityPlacementInput { id?: string; name?: string; marker?: nu
 export interface LotInput { id?: string; name: string; points: Point[]; unitId?: string | null; }
 export interface ImplantationInput { layout?: LayoutInput; latitude?: number | null; longitude?: number | null; buildings?: PlacementInput[]; amenities?: AmenityPlacementInput[]; lots?: LotInput[]; }
 export interface ModelLinkInput { node: string; unitId: string; }
+/** Classe pintada à mão sobre o chão deduzido da arte ("art" mantém a imagem original). */
+export const groundKinds = ['asphalt', 'grass', 'paving', 'art'] as const;
+export type GroundKind = (typeof groundKinds)[number];
+/** Traço de pincel (linha com raio) ou polígono preenchido, em pixels da arte; aplicados em ordem. */
+export interface GroundStrokeInput { kind: GroundKind; shape: 'brush' | 'polygon'; points: Point[]; radius?: number; }
 
 const round = (n: number, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 const finite = (...values: unknown[]) => values.every((v) => typeof v === 'number' && Number.isFinite(v));
@@ -184,6 +189,41 @@ export class ImplantationService {
     if (!Array.isArray(points) || points.length < 3 || points.length > 400) throw new BadRequestException(`${label}: o polígono precisa de 3 a 400 vértices`);
     const mx = layout.imageWidth * 0.1; const my = layout.imageHeight * 0.1;
     for (const p of points) if (!Array.isArray(p) || p.length !== 2 || !finite(p[0], p[1]) || p[0] < -mx || p[1] < -my || p[0] > layout.imageWidth + mx || p[1] > layout.imageHeight + my) throw new BadRequestException(`${label}: vértice fora da imagem`);
+  }
+
+  /**
+   * Correção manual do chão do lote (ViewerConfiguration.publicLayout.groundCorrection): o visualizador aplica os traços
+   * por cima da classificação automática da arte. Lista vazia remove a correção.
+   */
+  async saveGroundCorrection(context: OrganizationContext, developmentId: string, strokes: GroundStrokeInput[]) {
+    assertCanEdit(context);
+    return this.prisma.$transaction(async (db) => {
+      await this.development(context, developmentId, db);
+      const viewer = await db.viewerConfiguration.findUnique({ where: { developmentId } });
+      const current = (viewer?.publicLayout ?? null) as (Partial<LayoutInput> & Record<string, unknown>) | null;
+      if (!current?.imageWidth || !current.imageHeight || !current.lot?.length) throw new BadRequestException('Calibre a implantação e desenhe o contorno do terreno antes de corrigir o chão');
+      if (strokes.length > 2000) throw new BadRequestException('Correção do chão: no máximo 2000 traços');
+      let total = 0;
+      const mx = current.imageWidth * 0.1; const my = current.imageHeight * 0.1;
+      const clean = strokes.map((s, n) => {
+        const label = `Correção do chão, traço ${n + 1}`;
+        if (!groundKinds.includes(s.kind)) throw new BadRequestException(`${label}: classe inválida`);
+        if (s.shape !== 'brush' && s.shape !== 'polygon') throw new BadRequestException(`${label}: forma inválida`);
+        const min = s.shape === 'polygon' ? 3 : 1;
+        if (!Array.isArray(s.points) || s.points.length < min || s.points.length > 2000) throw new BadRequestException(`${label}: ${min} a 2000 pontos`);
+        for (const p of s.points) if (!Array.isArray(p) || p.length !== 2 || !finite(p[0], p[1]) || p[0] < -mx || p[1] < -my || p[0] > current.imageWidth! + mx || p[1] > current.imageHeight! + my) throw new BadRequestException(`${label}: ponto fora da imagem`);
+        total += s.points.length;
+        if (s.shape === 'brush' && (!finite(s.radius) || s.radius! < 0.5 || s.radius! > 500)) throw new BadRequestException(`${label}: raio do pincel entre 0,5 e 500 px`);
+        return { kind: s.kind, shape: s.shape, points: s.points.map(([x, y]) => [round(x, 1), round(y, 1)] as Point), ...(s.shape === 'brush' ? { radius: round(s.radius!, 1) } : {}) };
+      });
+      if (total > 100000) throw new BadRequestException('Correção do chão: no máximo 100 mil pontos no total');
+      const { groundCorrection: before, ...rest } = current;
+      const layout = clean.length ? { ...rest, groundCorrection: { strokes: clean, updatedAt: new Date().toISOString() } } : rest;
+      const config = await db.viewerConfiguration.update({ where: { developmentId }, data: { publicLayout: layout as Prisma.InputJsonValue } });
+      const count = (v: unknown) => ((v as { strokes?: unknown[] } | undefined)?.strokes?.length ?? 0);
+      await this.audit(db, context, 'ViewerConfiguration', config.id, 'UPDATE_GROUND_CORRECTION', { strokes: clean.length }, { strokes: count(before) });
+      return { groundCorrection: (layout as { groundCorrection?: unknown }).groundCorrection ?? null };
+    });
   }
 
   // Modelo GLB importado: nós (malhas) vinculados a unidades.

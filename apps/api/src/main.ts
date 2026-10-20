@@ -1,12 +1,15 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Correção do chão do lote (traços de pincel) passa do limite padrão de 100 kB.
+  app.useBodyParser('json', { limit: '2mb' });
   app.setGlobalPrefix('api/v1');
   app.use(helmet());
   app.enableCors({ origin: process.env.CORS_ORIGIN?.split(',') ?? false, credentials: true });

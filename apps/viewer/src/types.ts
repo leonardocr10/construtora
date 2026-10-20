@@ -30,7 +30,11 @@ export interface SiteLayout {
   lot?: Point[]; roads?: { name: string; points: Point[] }[]; showPrices?: boolean; notes?: string[];
   /** Raio (px) dos círculos numerados impressos na arte, apagados na textura. */
   markerRadius?: number;
+  /** Correção do chão pintada no painel, aplicada por cima da classificação automática da arte. */
+  groundCorrection?: { strokes: GroundStroke[]; updatedAt?: string };
 }
+/** Traço de pincel (linha com raio) ou polígono, em pixels da arte; "art" mantém a imagem original. */
+export interface GroundStroke { kind: 'asphalt' | 'grass' | 'paving' | 'art'; shape: 'brush' | 'polygon'; points: Point[]; radius?: number }
 export interface Development {
   id: string; slug: string; name: string; description: string | null; address: string | null; city: string | null; state: string | null;
   latitude: number | null; longitude: number | null; deliveryDate: string | null; coverAssetId: string | null;

@@ -3,7 +3,7 @@ import type { Library } from './library';
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
 import { buildCars, detectCars, lotBase } from './lot-relief';
-import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, paintGround, settleStalls, type Footprint, type GroundMap } from './ground';
+import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, Ground, manualAt, paintGround, settleStalls, type Footprint, type GroundMap } from './ground';
 import { buildAmenities } from './amenities';
 import { buildVectorGround } from './ground-vector';
 import { planParking } from './parking';
@@ -171,9 +171,11 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
           x: b.position!.x / layout.metersPerPixel + layout.origin[0], y: b.position!.z / layout.metersPerPixel + layout.origin[1],
           width: b.model3d?.width ?? 30, depth: b.model3d?.depth ?? 16, angle: ((b.position!.rotation ?? 0) * Math.PI) / 180,
         }));
-        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, [], erased, towerFootprints, original);
+        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, [], erased, towerFootprints, original, layout.groundCorrection?.strokes ?? []);
         // Fileiras de vagas encostadas no meio-fio, completas, e ocupadas conforme a arte.
         const parking = planParking(detected, ground, original, layout.metersPerPixel);
+        // Vaga cujo centro foi pintado à mão como outra coisa que não asfalto sai (com o carro).
+        parking.stalls = parking.stalls.filter((stall) => { const k = manualAt(ground, stall.x, stall.y); return !k || k === Ground.Asphalt; });
         settleStalls(ground, parking.stalls, layout.metersPerPixel);
         const painted = paintGround(canvas, ground, layout.metersPerPixel, parking.stalls);
         // Áreas de lazer em 3D, a partir do nome e da arte em volta de cada marcador.

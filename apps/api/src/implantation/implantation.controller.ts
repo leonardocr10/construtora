@@ -3,13 +3,13 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { Type } from 'class-transformer';
 import { ControlPointSource } from '@prisma/client';
-import { IsArray, IsBoolean, IsEnum, IsInt, IsLatitude, IsLongitude, IsNumber, IsObject, IsOptional, IsString, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsLatitude, IsLongitude, IsNumber, IsObject, IsOptional, IsString, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrganizationContext } from '../common/organization-context';
 import { CalibrationService, ControlPointInput } from './calibration.service';
-import { AmenityPlacementInput, ImplantationInput, ImplantationService, LayoutInput, LotInput, ModelLinkInput, PlacementInput } from './implantation.service';
+import { AmenityPlacementInput, GroundKind, groundKinds, GroundStrokeInput, ImplantationInput, ImplantationService, LayoutInput, LotInput, ModelLinkInput, PlacementInput } from './implantation.service';
 
 type Request = { organization: OrganizationContext };
 type Point = [number, number];
@@ -56,6 +56,15 @@ class ImplantationDto implements ImplantationInput {
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => AmenityPlacementDto) amenities?: AmenityPlacementDto[];
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => LotDto) lots?: LotDto[];
 }
+class GroundStrokeDto implements GroundStrokeInput {
+  @IsIn(groundKinds) kind!: GroundKind;
+  @IsIn(['brush', 'polygon']) shape!: 'brush' | 'polygon';
+  /** Pixels da arte da implantação [x, y]. */
+  @IsArray() @ArrayMaxSize(2000) points!: Point[];
+  /** Raio do pincel em pixels da arte. */
+  @IsOptional() @Type(() => Number) @IsNumber() radius?: number;
+}
+class GroundCorrectionDto { @IsArray() @ArrayMaxSize(2000) @ValidateNested({ each: true }) @Type(() => GroundStrokeDto) strokes!: GroundStrokeDto[]; }
 class ModelLinkDto implements ModelLinkInput { @IsString() @MaxLength(191) node!: string; @IsString() unitId!: string; }
 class ModelLinksDto { @IsArray() @ValidateNested({ each: true }) @Type(() => ModelLinkDto) links!: ModelLinkDto[]; }
 
@@ -95,6 +104,8 @@ export class ImplantationController {
 
   @Get(':id/implantation') get(@Req() r: Request, @Param('id') id: string) { return this.implantation.get(r.organization, id); }
   @Put(':id/implantation') save(@Req() r: Request, @Param('id') id: string, @Body() body: ImplantationDto) { return this.implantation.save(r.organization, id, body); }
+
+  @Put(':id/implantation/ground-correction') saveGround(@Req() r: Request, @Param('id') id: string, @Body() body: GroundCorrectionDto) { return this.implantation.saveGroundCorrection(r.organization, id, body.strokes); }
 
   @Get(':id/models/:versionId/links') links(@Req() r: Request, @Param('id') id: string, @Param('versionId') versionId: string) { return this.implantation.modelLinks(r.organization, id, versionId); }
   @Put(':id/models/:versionId/links') saveLinks(@Req() r: Request, @Param('id') id: string, @Param('versionId') versionId: string, @Body() body: ModelLinksDto) { return this.implantation.saveModelLinks(r.organization, id, versionId, body.links); }
