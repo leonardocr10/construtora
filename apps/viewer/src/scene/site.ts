@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
+import { buildCars, buildRelief, detectCars } from './lot-relief';
 
 /** Converte pixels da implantação para metros no referencial do terreno (antes da rotação do azimute). */
 export function pixelToSite(layout: SiteLayout, [px, py]: Point): Point {
@@ -85,7 +86,7 @@ function buildTrees(points: [number, number, number][]) {
   const dummy = new THREE.Object3D(); const color = new THREE.Color();
   points.forEach(([x, z, size], i) => {
     const trunk = size * 0.55;
-    dummy.position.set(x, 0.2, z); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, trunk, 1); dummy.updateMatrix(); trunks.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(x, 0.33, z); dummy.rotation.set(0, 0, 0); dummy.scale.set(1, trunk, 1); dummy.updateMatrix(); trunks.setMatrixAt(i, dummy.matrix);
     for (let j = 0; j < 2; j++) {
       const s = size * (j ? 0.62 : 0.85);
       dummy.position.set(x + (j ? size * 0.25 : 0), trunk + s * (j ? 1.15 : 0.75), z + (j ? -size * 0.18 : 0)); dummy.rotation.set(Math.random(), Math.random(), 0); dummy.scale.set(s, s * 0.92, s); dummy.updateMatrix();
@@ -147,6 +148,11 @@ export function buildSite(development: Development, siteImageUrl: string | null)
       const markers = development.amenities.filter((a) => a.position).map((a) => [a.position!.x / layout.metersPerPixel + layout.origin[0], a.position!.z / layout.metersPerPixel + layout.origin[1]] as Point);
       new THREE.ImageLoader().load(siteImageUrl, (image) => {
         const canvas = eraseMarkers(image, markers, layout.markerRadius ?? Math.round(layout.imageWidth * 0.0145));
+        // Carros desenhados viram volumes 3D; o asfalto fica rebaixado em relação às calçadas e gramados.
+        const cars = detectCars(canvas, layout.lot!, layout.metersPerPixel);
+        group.add(buildCars(cars.map((car) => { const [x, z] = pixelToSite(layout, [car.x, car.y]); return { x, z, angle: car.angle, color: car.color }; })));
+        lotMesh.geometry.dispose();
+        lotMesh.geometry = buildRelief(canvas, layout.lot!, (p) => pixelToSite(layout, p));
         const texture = new THREE.CanvasTexture(canvas);
         texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 8;
         material.map = texture; material.needsUpdate = true;
