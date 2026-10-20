@@ -99,6 +99,18 @@ No visualizador, os apartamentos cuja planta tem `layout` mostram **Planta 3D mo
 
 Plantas do Union Vista: `node scripts/import/union-vista-plantas-3d.mjs` (depois de `npm run build`) grava as plantas 01 e 02 tracejadas sobre o e-book e calibradas pelas cotas impressas. As versões garden usam a mesma planta, sem o garden.
 
+## Chão, estacionamento e lazer gerados da arte
+
+Tudo abaixo sai da arte da implantação e do cadastro, sem ajuste por empreendimento:
+
+- **Chão** (`scene/ground.ts`): cada pixel do lote vira asfalto, grama, piso, faixa pintada ou "outro". O chão é redesenhado com texturas próprias, e calçadas e canteiros sobem com meio-fio.
+- **Estacionamento** (`scene/lot-relief.ts`, `scene/parking.ts`): carros são detectados (inclusive fileiras de carros encostados), agrupados em fileiras alinhadas e encaixados em vagas de 2,5 m, todas demarcadas. Onde estava o carro, o chão é reconstruído pela continuação dos lados.
+- **Lazer** (`scene/amenities.ts`): o tipo vem do nome da área (piscina, quadra, beach tennis, quiosque/gourmet/bar, playground, deque, bicicletário, portaria/lixeira e construções em geral). O tamanho vem da arte em volta do marcador: água para a piscina, mancha de cor uniforme para o resto, com limites por tipo.
+- **Vegetação** (`scene/trees.ts`): árvores detectadas na arte ganham copa orgânica; palmeiras são plantadas em fileira nas faixas de grama junto ao muro.
+- **Torres** (`scene/tower.ts`): fachada em geometria (painéis em dois tons, janelas com caixilho e vidro, peitoril, frisos de laje e patamares da escada).
+
+No visualizador, o botão **Ocultar números** (barra de vistas) esconde os marcadores do lazer, e a escolha fica salva no navegador.
+
 ## Licença dos dados do mapa
 
 Os dados do OpenStreetMap são livres sob a licença ODbL. O crédito "© colaboradores do OpenStreetMap" com link para https://www.openstreetmap.org/copyright precisa ficar visível no visualizador, e já está. As consultas ao Overpass ficam em cache, para respeitar a política de uso do serviço.

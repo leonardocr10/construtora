@@ -3,9 +3,10 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
 import { buildCars, detectCars } from './lot-relief';
-import { buildGroundMesh, classifyGround, paintGround } from './ground';
+import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, paintGround, type GroundMap } from './ground';
+import { buildAmenities } from './amenities';
 import { planParking } from './parking';
-import { crownGeometry, trunkGeometry } from './trees';
+import { buildPalms, crownGeometry, trunkGeometry } from './trees';
 
 /** Converte pixels da implantação para metros no referencial do terreno (antes da rotação do azimute). */
 export function pixelToSite(layout: SiteLayout, [px, py]: Point): Point {
@@ -100,6 +101,40 @@ function buildTrees(points: [number, number, number][]) {
   return group;
 }
 
+/**
+ * Pontos de palmeira ao longo do muro: a cada ~7 m, 1,8 m para dentro do lote, só onde o chão é grama
+ * e longe de árvores já detectadas. Retorna pixels da arte.
+ */
+function borderPalms(lot: Point[], ground: GroundMap, metersPerPixel: number, trees: [number, number, number][]) {
+  const m = 1 / metersPerPixel; const spacing = 7 * m; const inset = 1.8 * m;
+  const isGrass = (x: number, y: number) => {
+    const gx = Math.round(x) - ground.x0, gy = Math.round(y) - ground.y0;
+    if (gx < 0 || gy < 0 || gx >= ground.w || gy >= ground.h) return false;
+    // Faixa inteira de grama em volta (1 m) para não pôr palmeira na borda de calçada.
+    for (const [dx, dy] of [[0, 0], [m, 0], [-m, 0], [0, m], [0, -m]]) {
+      const ix = Math.round(gx + dx), iy = Math.round(gy + dy);
+      if (ix < 0 || iy < 0 || ix >= ground.w || iy >= ground.h || ground.classes[iy * ground.w + ix] !== 2) return false;
+    }
+    return true;
+  };
+  const points: [number, number][] = [];
+  for (let i = 0; i < lot.length; i++) {
+    const [ax, ay] = lot[i]; const [bx, by] = lot[(i + 1) % lot.length];
+    const length = Math.hypot(bx - ax, by - ay); if (length < spacing) continue;
+    const ux = (bx - ax) / length, uy = (by - ay) / length;
+    for (let t = spacing / 2; t < length - spacing / 3; t += spacing) {
+      // A faixa de grama pode vir depois da calçada: tenta algumas distâncias do muro.
+      search: for (const depth of [1, 2, 3]) for (const side of [1, -1]) {
+        const x = ax + ux * t - uy * inset * depth * side, y = ay + uy * t + ux * inset * depth * side;
+        if (!insidePolygon([x, y], lot) || !isGrass(x, y)) continue;
+        if (trees.some(([tx, ty]) => Math.hypot(tx - x, ty - y) < 4 * m) || points.some(([px, py]) => Math.hypot(px - x, py - y) < spacing * 0.7)) break search;
+        points.push([x, y]); break search;
+      }
+    }
+  }
+  return points;
+}
+
 /** Muro baixo no contorno do lote, como nas maquetes de vendas. */
 function buildWall(lot: Point[]) {
   const parts: THREE.BufferGeometry[] = [];
@@ -156,6 +191,8 @@ export function buildSite(development: Development, siteImageUrl: string | null)
         // Chão modelado: asfalto, grama e piso redesenhados e calçadas/canteiros com meio-fio de verdade.
         const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, parking.stalls, erased);
         const painted = paintGround(canvas, ground, layout.metersPerPixel, parking.stalls);
+        // Áreas de lazer em 3D, a partir do nome e da arte em volta de cada marcador.
+        group.add(buildAmenities(canvas, layout.lot!, development.amenities, layout.metersPerPixel, layout.origin, (p) => pixelToSite(layout, p), asphaltLevel + curbHeight));
         // Carro só onde o chão ficou asfalto (sombra de árvore no gramado não vira carro).
         const onAsphalt = (car: { x: number; y: number }) => {
           const gx = Math.round(car.x) - ground.x0; const gy = Math.round(car.y) - ground.y0;
@@ -170,7 +207,11 @@ export function buildSite(development: Development, siteImageUrl: string | null)
         lotMesh.material = [material, new THREE.MeshStandardMaterial({ color: 0xd4d1c8, roughness: 0.9, side: THREE.DoubleSide })];
         const footprints = development.buildings.filter((b) => b.position).map((b) => ({ x: b.position!.x / layout.metersPerPixel + layout.origin[0], y: b.position!.z / layout.metersPerPixel + layout.origin[1], r: Math.hypot(b.model3d?.width ?? 30, b.model3d?.depth ?? 16) / 2 / layout.metersPerPixel + 4 }));
         const trees = detectTrees(canvas, layout.lot!, footprints, layout.metersPerPixel);
-        if (trees.length) group.add(buildTrees(trees.map(([px, py, size]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, size] as [number, number, number]; })));
+        const place = (list: typeof trees) => list.map(([px, py, size]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, size] as [number, number, number]; });
+        if (trees.length) group.add(buildTrees(place(trees)));
+        // Palmeiras em fileira nas faixas de grama junto ao muro (paisagismo típico), longe das árvores.
+        const palms = borderPalms(layout.lot!, ground, layout.metersPerPixel, trees);
+        if (palms.length) group.add(buildPalms(palms.map(([px, py]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, 3] as [number, number, number]; })));
       });
     }
     const lotMesh = new THREE.Mesh<THREE.BufferGeometry, THREE.Material | THREE.Material[]>(geometry, material);

@@ -18,7 +18,7 @@ export const openingKinds: Record<OpeningKind, { label: string; width: number }>
 
 /** Sugere o tipo do cômodo pelo nome ("Dormitório 2" → quarto, "WC" → banheiro…). */
 export function guessRoomKind(name: string): RoomKind {
-  const n = name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const n = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   if (/suite/.test(n)) return 'suite';
   if (/quarto|dorm/.test(n)) return 'bedroom';
   if (/banh|wc|lavabo/.test(n)) return 'bathroom';
