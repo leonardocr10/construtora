@@ -22,7 +22,7 @@ export const routes: Routes = [
       { path: 'empreendimentos/:id/plantas/:planId/vetorizar', loadComponent: page(() => import('./pages/floor-plan-editor.page').then((m) => m.FloorPlanEditorPage)), title: 'Vetorizar planta · VistaHub' },
       { path: 'empreendimentos/:id/calibrar', loadComponent: page(() => import('./pages/calibration.page').then((m) => m.CalibrationPage)), title: 'Calibrar implantação · VistaHub' },
       { path: 'empreendimentos/:id/implantacao', loadComponent: page(() => import('./pages/implantation-editor.page').then((m) => m.ImplantationEditorPage)), title: 'Editor de implantação · VistaHub' },
-      { path: 'empreendimentos/:id/chao', loadComponent: page(() => import('./pages/ground-correction.page').then((m) => m.GroundCorrectionPage)), title: 'Corrigir chão do lote · VistaHub' },
+      { path: 'empreendimentos/:id/chao', loadComponent: page(() => import('./pages/ground-plan.page').then((m) => m.GroundPlanPage)), title: 'Chão do lote · VistaHub' },
       { path: 'empreendimentos/:id/estudio-3d', loadComponent: page(() => import('./pages/studio.page').then((m) => m.StudioPage)), title: 'Estúdio 3D · VistaHub' },
       { path: 'leads', loadComponent: page(() => import('./pages/leads.page').then((m) => m.LeadsPage)), title: 'Leads · VistaHub' },
     ],

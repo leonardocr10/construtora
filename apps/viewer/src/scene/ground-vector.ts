@@ -34,37 +34,51 @@ export function buildVectorGround(map: GroundMap, toSite: (p: Point) => Point): 
     return blur(f, W, H);
   };
   const raised = (c: number) => c === Ground.Grass || c === Ground.Paving || c === Ground.Other;
-  const toGeo = (loops: Point[][], y: number) => {
-    const parts = nest(loops);
-    const positions: number[] = []; const indices: number[] = []; const uvs: number[] = [];
-    for (const { outer, holes } of parts) {
-      const ring = [outer, ...holes].map((loop) => loop.map((p) => toSite([p[0] + map.x0, p[1] + map.y0])));
-      const flat: number[] = []; const holeIndex: number[] = [];
-      for (const loop of ring) { if (flat.length) holeIndex.push(flat.length / 2); for (const [x, z] of loop) flat.push(x, z); }
-      const tri = earcut(flat, holeIndex);
-      const base = positions.length / 3;
-      for (let i = 0; i < flat.length; i += 2) { positions.push(flat[i], y, flat[i + 1]); uvs.push(flat[i], -flat[i + 1]); }
-      // Frente para cima: (c − b) × (a − b) com y positivo.
-      for (let i = 0; i < tri.length; i += 3) {
-        const [a, b, c] = [tri[i], tri[i + 1], tri[i + 2]];
-        const ax = flat[a * 2], az = flat[a * 2 + 1], bx = flat[b * 2], bz = flat[b * 2 + 1], cx = flat[c * 2], cz = flat[c * 2 + 1];
-        const up = (cz - bz) * (ax - bx) - (cx - bx) * (az - bz) >= 0;
-        indices.push(...(up ? [a + base, b + base, c + base] : [a + base, c + base, b + base]));
-      }
-    }
-    return positions.length ? computeNormals({ positions, indices, uvs }) : null;
-  };
+  const toGeo = (loops: Point[][], y: number) => partsToGeo(nest(loops), y, (p) => toSite([p[0] + map.x0, p[1] + map.y0]));
 
   const raisedLoops = contours(field(raised), w + 2, h + 2);
   const grassLoops = contours(field((c) => c === Ground.Grass), w + 2, h + 2);
   const otherLoops = contours(field((c) => c === Ground.Other), w + 2, h + 2);
 
   // Meio-fio: faixa vertical do asfalto ao chão elevado ao longo de cada contorno elevado.
+  const curbs = curbFaces(raisedLoops.map((loop) => loop.map((p) => toSite([p[0] + map.x0, p[1] + map.y0]))));
+  return {
+    raised: toGeo(raisedLoops, level) ?? { positions: [], indices: [], uvs: [] },
+    grass: toGeo(grassLoops, level + 0.01),
+    other: toGeo(otherLoops, level + 0.02),
+    curbs,
+  };
+}
+
+/** Contornos externos com furos (em qualquer referencial: `toSite` leva ao terreno) triangulados à cota `y`. */
+export function partsToGeo(parts: { outer: Point[]; holes: Point[][] }[], y: number, toSite: (p: Point) => Point): Geo | null {
+  const positions: number[] = []; const indices: number[] = []; const uvs: number[] = [];
+  for (const { outer, holes } of parts) {
+    const ring = [outer, ...holes].map((loop) => loop.map(toSite));
+    const flat: number[] = []; const holeIndex: number[] = [];
+    for (const loop of ring) { if (flat.length) holeIndex.push(flat.length / 2); for (const [x, z] of loop) flat.push(x, z); }
+    const tri = earcut(flat, holeIndex);
+    const base = positions.length / 3;
+    for (let i = 0; i < flat.length; i += 2) { positions.push(flat[i], y, flat[i + 1]); uvs.push(flat[i], -flat[i + 1]); }
+    // Frente para cima: (c − b) × (a − b) com y positivo.
+    for (let i = 0; i < tri.length; i += 3) {
+      const [a, b, c] = [tri[i], tri[i + 1], tri[i + 2]];
+      const ax = flat[a * 2], az = flat[a * 2 + 1], bx = flat[b * 2], bz = flat[b * 2 + 1], cx = flat[c * 2], cz = flat[c * 2 + 1];
+      const up = (cz - bz) * (ax - bx) - (cx - bx) * (az - bz) >= 0;
+      indices.push(...(up ? [a + base, b + base, c + base] : [a + base, c + base, b + base]));
+    }
+  }
+  return positions.length ? computeNormals({ positions, indices, uvs }) : null;
+}
+
+/** Faces verticais do meio-fio, do asfalto ao chão elevado, ao longo de cada laço (já no referencial do terreno). */
+export function curbFaces(loops: Point[][]): Geo {
+  const level = asphaltLevel + curbHeight;
   const curbs: Geo = { positions: [], indices: [], uvs: [] };
-  for (const loop of raisedLoops) {
+  for (const loop of loops) {
     let along = 0;
     for (let i = 0; i < loop.length; i++) {
-      const [ax, az] = toSite([loop[i][0] + map.x0, loop[i][1] + map.y0]); const [bx, bz] = toSite([loop[(i + 1) % loop.length][0] + map.x0, loop[(i + 1) % loop.length][1] + map.y0]);
+      const [ax, az] = loop[i]; const [bx, bz] = loop[(i + 1) % loop.length];
       const len = Math.hypot(bx - ax, bz - az); const base = curbs.positions.length / 3;
       curbs.positions.push(ax, asphaltLevel, az, bx, asphaltLevel, bz, bx, level, bz, ax, level, az);
       curbs.uvs.push(along, 0, along + len, 0, along + len, curbHeight, along, curbHeight);
@@ -72,12 +86,7 @@ export function buildVectorGround(map: GroundMap, toSite: (p: Point) => Point): 
       along += len;
     }
   }
-  return {
-    raised: toGeo(raisedLoops, level) ?? { positions: [], indices: [], uvs: [] },
-    grass: toGeo(grassLoops, level + 0.01),
-    other: toGeo(otherLoops, level + 0.02),
-    curbs: computeNormals(curbs),
-  };
+  return computeNormals(curbs);
 }
 
 /** Desfoque 3 × 3 (duas passadas separáveis). */

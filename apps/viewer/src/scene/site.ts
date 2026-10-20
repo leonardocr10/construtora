@@ -3,9 +3,10 @@ import type { Library } from './library';
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
 import { buildCars, detectCars, lotBase } from './lot-relief';
-import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, Ground, manualAt, paintGround, settleStalls, type Footprint, type GroundMap } from './ground';
+import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, Ground, manualAt, paintGround, planGround, settleStalls, type Footprint, type GroundMap } from './ground';
 import { buildAmenities } from './amenities';
 import { buildVectorGround } from './ground-vector';
+import { buildPlanGround } from './ground-plan';
 import { planParking } from './parking';
 import { buildPalms, buildTrees } from './trees';
 import { box, compose, merge, meshFrom, pbr, polygon, prism, shadows, transform, type Geo } from './geometry';
@@ -171,10 +172,12 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
           x: b.position!.x / layout.metersPerPixel + layout.origin[0], y: b.position!.z / layout.metersPerPixel + layout.origin[1],
           width: b.model3d?.width ?? 30, depth: b.model3d?.depth ?? 16, angle: ((b.position!.rotation ?? 0) * Math.PI) / 180,
         }));
-        const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, [], erased, towerFootprints, original, layout.groundCorrection?.strokes ?? []);
+        // Chão desenhado no painel (polígonos) quando houver; senão, deduzido pela cor de cada pixel da arte.
+        const plan = layout.groundPlan?.polygons.length ? layout.groundPlan.polygons : null;
+        const ground = plan ? planGround(layout.lot!, plan, canvas.width, canvas.height) : classifyGround(canvas, layout.lot!, layout.metersPerPixel, [], erased, towerFootprints, original);
         // Fileiras de vagas encostadas no meio-fio, completas, e ocupadas conforme a arte.
         const parking = planParking(detected, ground, original, layout.metersPerPixel);
-        // Vaga cujo centro foi pintado à mão como outra coisa que não asfalto sai (com o carro).
+        // Vaga cujo centro foi desenhado no painel como outra coisa que não asfalto sai (com o carro).
         parking.stalls = parking.stalls.filter((stall) => { const k = manualAt(ground, stall.x, stall.y); return !k || k === Ground.Asphalt; });
         settleStalls(ground, parking.stalls, layout.metersPerPixel);
         const painted = paintGround(canvas, ground, layout.metersPerPixel, parking.stalls);
@@ -207,7 +210,7 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
           // Asfalto: o polígono do lote inteiro. Por cima, o chão elevado em contornos vetoriais suavizados.
           const base = polygon(lot, asphaltLevel);
           shadows(meshFrom('lot-asphalt', tiled(base, library.tileMeters('asphalt')), scene, materials[1], group), false).freezeWorldMatrix();
-          const vector = buildVectorGround(ground, (p) => pixelToSite(layout, p));
+          const vector = plan ? buildPlanGround(layout.lot!, plan, (p) => pixelToSite(layout, p)) : buildVectorGround(ground, (p) => pixelToSite(layout, p));
           const top = (name: string, geo: Geo | null, material: PBRMaterial, set?: string) => {
             if (!geo) return;
             shadows(meshFrom(name, set ? tiled(geo, library.tileMeters(set)) : { ...geo, uvs: artUv(geo, ground, layout) }, scene, material, group), false).freezeWorldMatrix();

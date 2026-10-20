@@ -62,7 +62,7 @@ export class AppComponent {
     { icon: '▧', label: 'Plantas e tipologias', path: 'plantas' },
     { icon: '⌖', label: 'Implantação', path: 'implantacao' },
     { icon: '◎', label: 'Calibrar implantação', path: 'calibrar' },
-    { icon: '▨', label: 'Corrigir chão do lote', path: 'chao' },
+    { icon: '▨', label: 'Chão do lote', path: 'chao' },
     { icon: '⬡', label: 'Estúdio 3D', path: 'estudio-3d' },
   ];
 

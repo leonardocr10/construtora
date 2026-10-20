@@ -8,7 +8,7 @@ import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
-  // Correção do chão do lote (traços de pincel) passa do limite padrão de 100 kB.
+  // Chão do lote desenhado no painel (polígonos) pode passar do limite padrão de 100 kB.
   app.useBodyParser('json', { limit: '2mb' });
   app.setGlobalPrefix('api/v1');
   app.use(helmet());

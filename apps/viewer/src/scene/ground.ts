@@ -1,5 +1,5 @@
 import { computeNormals, type Geo } from './geometry';
-import type { GroundStroke, Point } from '../types';
+import type { GroundPolygon, Point } from '../types';
 import { stallLength, traceStalls, type Stall } from './parking';
 
 /**
@@ -25,7 +25,7 @@ export interface GroundMap {
   marks: Uint8Array;
   /** 1 onde fica a torre e a calçada em volta dela (não recebe vaga). */
   plaza?: Uint8Array;
-  /** Classe pintada à mão no painel (0 onde não há correção): vale sobre qualquer dedução. */
+  /** Classe desenhada no painel (0 onde não há): vale sobre qualquer dedução e limpeza. */
   manual?: Uint8Array;
 }
 
@@ -241,7 +241,7 @@ function keepThinMarks(marks: Uint8Array, w: number, h: number, metersPerPixel: 
  * `source`: a arte original (antes de apagar os carros). A detecção pinta cada carro com a cor do asfalto em
  * volta; classificar a partir dela transformava qualquer falsa detecção (deque, sombra) em asfalto.
  */
-export function classifyGround(canvas: HTMLCanvasElement, lot: Point[], metersPerPixel: number, stalls: Stall[] = [], erased?: Uint8Array, footprints: Footprint[] = [], source?: ImageData, correction: GroundStroke[] = []): GroundMap {
+export function classifyGround(canvas: HTMLCanvasElement, lot: Point[], metersPerPixel: number, stalls: Stall[] = [], erased?: Uint8Array, footprints: Footprint[] = [], source?: ImageData): GroundMap {
   const xs = lot.map((p) => p[0]); const ys = lot.map((p) => p[1]);
   const x0 = Math.max(0, Math.floor(Math.min(...xs))); const y0 = Math.max(0, Math.floor(Math.min(...ys)));
   const w = Math.min(canvas.width, Math.ceil(Math.max(...xs))) - x0; const h = Math.min(canvas.height, Math.ceil(Math.max(...ys))) - y0;
@@ -377,46 +377,38 @@ export function classifyGround(canvas: HTMLCanvasElement, lot: Point[], metersPe
     else if (art[i] === Ground.Paving && lum[i] > 165) marks[i] = 2;
   }
   keepThinMarks(marks, w, h, metersPerPixel);
-  const map: GroundMap = { x0, y0, w, h, classes, marks, plaza };
-  if (correction.length) {
-    map.manual = rasterizeCorrection(correction, x0, y0, w, h);
-    for (let i = 0; i < w * h; i++) if (inside[i * 4 + 3] < 128) map.manual[i] = 0;
-    applyManual(map);
-  }
-  return map;
+  return { x0, y0, w, h, classes, marks, plaza };
 }
 
-const strokeClass: Record<GroundStroke['kind'], Ground> = { asphalt: Ground.Asphalt, grass: Ground.Grass, paving: Ground.Paving, art: Ground.Other };
+const polygonClass: Record<GroundPolygon['kind'], Ground> = { asphalt: Ground.Asphalt, grass: Ground.Grass, paving: Ground.Paving, art: Ground.Other };
 
 /**
- * Traços da correção, em ordem (o último vence), num canvas do tamanho do recorte. Cada classe tem um canal
- * próprio (asfalto R, grama G, piso B, arte preto): na borda suavizada de um traço sobre outro vence o de maior
- * cobertura, sem cor intermediária virar uma terceira classe.
+ * Chão desenhado no painel, sem dedução pela cor: o lote é asfalto e os polígonos vêm por cima, em ordem (o último
+ * vence). Cada classe pinta um canal próprio (asfalto R, grama G, piso B, arte preto): na borda suavizada de um
+ * polígono sobre outro vence o de maior cobertura, sem cor intermediária virar uma terceira classe.
  */
-function rasterizeCorrection(strokes: GroundStroke[], x0: number, y0: number, w: number, h: number) {
+export function planGround(lot: Point[], polygons: GroundPolygon[], imageWidth: number, imageHeight: number): GroundMap {
+  const xs = lot.map((p) => p[0]); const ys = lot.map((p) => p[1]);
+  const x0 = Math.max(0, Math.floor(Math.min(...xs))); const y0 = Math.max(0, Math.floor(Math.min(...ys)));
+  const w = Math.min(imageWidth, Math.ceil(Math.max(...xs))) - x0; const h = Math.min(imageHeight, Math.ceil(Math.max(...ys))) - y0;
   const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  const colors: Record<GroundStroke['kind'], string> = { asphalt: '#f00', grass: '#0f0', paving: '#00f', art: '#000' };
-  ctx.translate(-x0, -y0); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  for (const s of strokes) {
-    if (!s.points.length) continue;
-    ctx.fillStyle = ctx.strokeStyle = colors[s.kind] ?? '#000';
-    ctx.beginPath();
-    if (s.shape === 'polygon') { s.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill(); continue; }
-    const r = s.radius ?? 4;
-    if (s.points.length === 1) { ctx.arc(s.points[0][0], s.points[0][1], r, 0, Math.PI * 2); ctx.fill(); continue; }
-    ctx.lineWidth = 2 * r; s.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
-  }
-  const data = ctx.getImageData(0, 0, w, h).data; const out = new Uint8Array(w * h);
+  const colors: Record<GroundPolygon['kind'], string> = { asphalt: '#f00', grass: '#0f0', paving: '#00f', art: '#000' };
+  ctx.translate(-x0, -y0);
+  const fill = (points: Point[], color: string) => { ctx.fillStyle = color; ctx.beginPath(); points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill(); };
+  fill(lot, colors.asphalt);
+  for (const g of polygons) if (g.points.length >= 3) fill(g.points, colors[g.kind] ?? colors.art);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = 'destination-in'; fill(lot.map(([x, y]) => [x - x0, y - y0] as Point), '#fff');
+  const data = ctx.getImageData(0, 0, w, h).data; const classes = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) {
     if (data[i * 4 + 3] < 128) continue;
     const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2]; const top = Math.max(r, g, b);
-    out[i] = top < 128 ? strokeClass.art : top === r ? strokeClass.asphalt : top === g ? strokeClass.grass : strokeClass.paving;
+    classes[i] = top < 128 ? polygonClass.art : top === r ? polygonClass.asphalt : top === g ? polygonClass.grass : polygonClass.paving;
   }
-  return out;
+  return { x0, y0, w, h, classes, marks: new Uint8Array(w * h), manual: new Uint8Array(classes) };
 }
 
-/** Reaplica a correção manual: classe pintada, sem faixa pintada fora do asfalto e sem calçada de torre sob ela. */
+/** Reaplica o chão desenhado: a classe dele, sem faixa pintada fora do asfalto e sem calçada de torre sob ela. */
 function applyManual(map: GroundMap) {
   const { manual, classes, marks, plaza } = map; if (!manual) return;
   for (let i = 0; i < manual.length; i++) {
@@ -427,7 +419,7 @@ function applyManual(map: GroundMap) {
   }
 }
 
-/** Classe pintada à mão no pixel da arte (0 sem correção). */
+/** Classe desenhada no painel no pixel da arte (0 sem desenho). */
 export function manualAt(map: GroundMap, x: number, y: number) {
   const gx = Math.round(x) - map.x0, gy = Math.round(y) - map.y0;
   return !map.manual || gx < 0 || gy < 0 || gx >= map.w || gy >= map.h ? 0 : map.manual[gy * map.w + gx];
@@ -651,7 +643,7 @@ export function settleStalls(map: GroundMap, stalls: Stall[], metersPerPixel: nu
     }
     classes.set(next);
   }
-  // A correção pintada no painel vence toda a limpeza acima.
+  // O chão desenhado no painel vence toda a limpeza acima.
   applyManual(map);
 }
 /** Superfície elevada (calçada, canteiro, gramado, deck): tudo que não é asfalto. */
