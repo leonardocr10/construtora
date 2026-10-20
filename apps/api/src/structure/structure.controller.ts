@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
+import { createReadStream } from 'node:fs';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsBoolean, IsEmail, IsEnum, IsInt, IsNumber, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator';
@@ -57,6 +58,7 @@ class FloorPlanDto implements FloorPlanInput {
   @IsOptional() @IsString() description?: string;
 }
 class LinkFloorPlanDto { @IsString() floorPlanId!: string; @IsOptional() @IsBoolean() primary?: boolean; }
+class FloorPlanLayoutDto { /** Validado em detalhe por parsePlanLayout; null remove. */ @IsOptional() @IsObject() layout!: object | null; }
 class ActivateModelDto { @IsString() modelVersionId!: string; }
 class ViewerDto { @IsOptional() @IsObject() camera?: object; @IsOptional() @IsObject() lighting?: object; @IsOptional() @IsObject() interaction?: object; @IsOptional() @IsObject() publicLayout?: object; }
 class LeadDto implements LeadInput {
@@ -90,6 +92,15 @@ export class StructureController {
   @Post('units/:id/floor-plans') linkFloorPlan(@Req() r: Request, @Param('id') id: string, @Body() body: LinkFloorPlanDto) { return this.structure.linkFloorPlan(r.organization, id, body.floorPlanId, body.primary); }
 
   @Get('developments/:id/floor-plans') floorPlans(@Req() r: Request, @Param('id') id: string) { return this.structure.listFloorPlans(r.organization, id); }
+  @Get('floor-plans/:id/layout') floorPlanLayout(@Req() r: Request, @Param('id') id: string) { return this.structure.floorPlanLayout(r.organization, id); }
+  @Get('floor-plans/:id/assets/:assetId')
+  async floorPlanAsset(@Req() r: Request, @Param('id') id: string, @Param('assetId') assetId: string, @Res() response: { setHeader(k: string, v: string): void }) {
+    const file = await this.structure.floorPlanAsset(r.organization, id, assetId);
+    response.setHeader('Content-Type', file.mimeType);
+    response.setHeader('Cache-Control', 'private, max-age=3600');
+    createReadStream(file.path).pipe(response as unknown as NodeJS.WritableStream);
+  }
+  @Put('floor-plans/:id/layout') saveFloorPlanLayout(@Req() r: Request, @Param('id') id: string, @Body() body: FloorPlanLayoutDto) { return this.structure.saveFloorPlanLayout(r.organization, id, body.layout ?? null); }
   @Post('developments/:id/floor-plans') createFloorPlan(@Req() r: Request, @Param('id') id: string, @Body() body: FloorPlanDto) { return this.structure.createFloorPlan(r.organization, id, body); }
 
   @Get('developments/:id/models') models(@Req() r: Request, @Param('id') id: string) { return this.structure.listModelVersions(r.organization, id); }

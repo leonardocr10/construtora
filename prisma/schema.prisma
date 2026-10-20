@@ -355,6 +355,8 @@ model FloorPlan {
   bathrooms     Int?
   parkingSpaces Int?
   description   String?            @db.Text
+  /// Planta vetorizada em metros (paredes, aberturas e cômodos) para a planta 3D mobiliada.
+  layout        Json?
   development   Development        @relation(fields: [developmentId], references: [id], onDelete: Restrict)
   units         UnitFloorPlan[]
   assets        DevelopmentAsset[]

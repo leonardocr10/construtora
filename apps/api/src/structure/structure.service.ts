@@ -3,6 +3,9 @@ import { LeadStatus, Prisma, UnitStatus } from '@prisma/client';
 import { OrganizationContext } from '../common/organization-context';
 import { PrismaService } from '../common/prisma.service';
 import { assertCanEdit, assertCommercial } from '../common/roles';
+import { join } from 'node:path';
+import { storageRoot } from '../public/public.service';
+import { parsePlanLayout } from './plan-layout';
 
 type Db = Prisma.TransactionClient;
 
@@ -183,6 +186,34 @@ export class StructureService {
       const plan = await db.floorPlan.create({ data: { developmentId, ...input } });
       await this.audit(db, context, 'FloorPlan', plan.id, 'CREATE', { name: plan.name });
       return plan;
+    });
+  }
+
+  async floorPlanLayout(context: OrganizationContext, floorPlanId: string) {
+    const plan = await this.prisma.floorPlan.findFirst({ where: { id: floorPlanId, development: { organizationId: context.organizationId, archivedAt: null } }, include: { assets: { select: { id: true, kind: true, originalName: true, mimeType: true } } } });
+    if (!plan) throw new NotFoundException('Planta não encontrada');
+    return plan;
+  }
+
+  /** Arquivo de uma planta (imagem usada como fundo no editor de vetorização). */
+  async floorPlanAsset(context: OrganizationContext, floorPlanId: string, assetId: string) {
+    const plan = await this.floorPlanLayout(context, floorPlanId);
+    const asset = await this.prisma.developmentAsset.findFirst({ where: { id: assetId, developmentId: plan.developmentId } });
+    if (!asset || !asset.mimeType.startsWith('image/')) throw new NotFoundException('Imagem não encontrada');
+    return { path: join(storageRoot(), asset.storageKey), mimeType: asset.mimeType };
+  }
+
+  /** Grava a planta vetorizada (paredes, portas, janelas e cômodos) usada na planta 3D mobiliada. */
+  async saveFloorPlanLayout(context: OrganizationContext, floorPlanId: string, input: unknown) {
+    assertCanEdit(context);
+    const layout = input === null ? null : parsePlanLayout(input);
+    return this.prisma.$transaction(async (db) => {
+      const plan = await db.floorPlan.findFirst({ where: { id: floorPlanId, development: { organizationId: context.organizationId, archivedAt: null } } });
+      if (!plan) throw new NotFoundException('Planta não encontrada');
+      if (layout?.imageAssetId && !(await db.developmentAsset.findFirst({ where: { id: layout.imageAssetId, developmentId: plan.developmentId } }))) throw new BadRequestException('Imagem não pertence ao empreendimento');
+      const updated = await db.floorPlan.update({ where: { id: floorPlanId }, data: { layout: layout ? (layout as unknown as Prisma.InputJsonValue) : Prisma.DbNull } });
+      await this.audit(db, context, 'FloorPlan', floorPlanId, 'LAYOUT', layout ? { walls: layout.walls.length, openings: layout.openings.length, rooms: layout.rooms.length } : { removed: true });
+      return updated;
     });
   }
 

@@ -60,7 +60,7 @@ export class PublicService {
           floorPlanId: (u.floorPlans.find((f) => f.primary) ?? u.floorPlans[0])?.floorPlanId ?? null,
         })),
       })),
-      floorPlans: floorPlans.map((p) => ({ id: p.id, name: p.name, code: p.code, area: p.area?.toNumber() ?? null, bedrooms: p.bedrooms, suites: p.suites, bathrooms: p.bathrooms, parkingSpaces: p.parkingSpaces, description: p.description, imageAssetIds: p.assets.map((a) => a.id) })),
+      floorPlans: floorPlans.map((p) => ({ id: p.id, name: p.name, code: p.code, area: p.area?.toNumber() ?? null, bedrooms: p.bedrooms, suites: p.suites, bathrooms: p.bathrooms, parkingSpaces: p.parkingSpaces, description: p.description, imageAssetIds: p.assets.map((a) => a.id), layout: p.layout ?? null })),
       amenities: amenities.map((a) => ({ id: a.id, name: a.name, description: a.description, marker: a.marker, position: a.position, mediaAssetIds: a.media.map((m) => m.assetId) })),
       gallery: assets,
     };
