@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { computeNormals, type Geo } from './geometry';
 import type { Point } from '../types';
 import { stallLength, traceStalls, type Stall } from './parking';
 
@@ -446,11 +446,9 @@ export function buildGroundMesh(map: GroundMap, toSite: (p: Point) => Point, uvS
     }
   }
 
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute([...top, ...side], 3));
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([...topUv, ...new Array((side.length / 3) * 2).fill(0)], 2));
-  geometry.addGroup(0, top.length / 3, 0);
-  geometry.addGroup(top.length / 3, side.length / 3, 1);
-  geometry.computeVertexNormals();
-  return geometry;
+  // Duas malhas: topo (textura do chão) e faces verticais do meio-fio (concreto).
+  const sequence = (n: number) => Array.from({ length: n }, (_, i) => i);
+  const topGeo: Geo = computeNormals({ positions: top, indices: sequence(top.length / 3), uvs: topUv });
+  const sideGeo: Geo = computeNormals({ positions: side, indices: sequence(side.length / 3), uvs: new Array((side.length / 3) * 2).fill(0) });
+  return { top: topGeo, side: sideGeo };
 }

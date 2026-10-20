@@ -1,6 +1,10 @@
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import {
+  ArcRotateCamera, Color4, DefaultRenderingPipeline, DirectionalLight, DynamicTexture, HemisphericLight, ImageProcessingConfiguration,
+  PointLight, Scene, ShadowGenerator, Texture, TransformNode, UniversalCamera, Vector3, type AbstractEngine, type PBRMaterial,
+} from './babylon';
+import { createEngine } from './engine';
+import { box as boxGeo, compose, cylinder as cylinderGeo, icosahedron, merge, meshFrom, pbr, polygon, rgb, shadows, transform, translate, type Geo, type MaterialOptions } from './geometry';
+import { skyEnvironment } from './world';
 import type { PlanLayout, Point, RoomKind } from '../types';
 
 /**
@@ -16,137 +20,135 @@ type Side = { axis: 'x' | 'y'; fixed: number; from: number; to: number; normal: 
 
 const eye = 1.6;
 const inset = 0.08;
+const deg = (d: number) => (d * Math.PI) / 180;
 const roomLabel: Record<RoomKind, string> = { living: 'Sala', kitchen: 'Cozinha', bedroom: 'Quarto', suite: 'Suíte', bathroom: 'Banheiro', balcony: 'Varanda', service: 'Área de serviço', hall: 'Circulação', garden: 'Garden' };
 
-// ——— materiais ———
-const mat = (color: string, roughness = 0.8, extra: THREE.MeshStandardMaterialParameters = {}) => new THREE.MeshStandardMaterial({ color, roughness, ...extra });
-function canvasTexture(size: number, draw: (g: CanvasRenderingContext2D, s: number) => void, metersPerTile: number) {
-  const canvas = document.createElement('canvas'); canvas.width = canvas.height = size;
-  draw(canvas.getContext('2d')!, size);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.colorSpace = THREE.SRGBColorSpace;
-  texture.repeat.set(1 / metersPerTile, 1 / metersPerTile); texture.anisotropy = 8;
-  return texture;
+// ——— materiais (criados por cena; a paleta é só a receita) ———
+type Recipe = MaterialOptions & { tex?: () => HTMLCanvasElement; tile?: number };
+const m = (color: string, roughness = 0.8, extra: Recipe = {}): Recipe => ({ color, roughness, ...extra });
+function canvas(size: number, draw: (g: CanvasRenderingContext2D, s: number) => void) {
+  const c = document.createElement('canvas'); c.width = c.height = size; draw(c.getContext('2d')!, size); return c;
 }
-function wood(base: string) {
-  return canvasTexture(512, (g, s) => {
-    g.fillStyle = base; g.fillRect(0, 0, s, s);
-    const rows = 8; const h = s / rows;
-    for (let r = 0; r < rows; r++) {
-      const shift = (r % 3) * s / 3;
-      for (let k = 0; k < 2; k++) {
-        const x = (shift + k * s / 2) % s;
-        const tone = 0.88 + ((r * 7 + k * 3) % 5) * 0.035;
-        g.fillStyle = `rgba(${tone > 1 ? 255 : 0},${tone > 1 ? 240 : 0},0,${Math.abs(1 - tone) * 0.9})`;
-        g.fillRect(x, r * h, s / 2, h);
-        g.fillStyle = 'rgba(60,35,15,0.35)'; g.fillRect(x, r * h, 2, h);
-      }
-      g.fillStyle = 'rgba(60,35,15,0.35)'; g.fillRect(0, r * h, s, 2);
-      for (let i = 0; i < 14; i++) { g.strokeStyle = 'rgba(90,55,25,0.08)'; g.beginPath(); const y = r * h + Math.random() * h; g.moveTo(0, y); g.bezierCurveTo(s / 3, y + 4, s * 2 / 3, y - 4, s, y); g.stroke(); }
+const wood = (base: string) => () => canvas(512, (g, s) => {
+  g.fillStyle = base; g.fillRect(0, 0, s, s);
+  const rows = 8; const h = s / rows;
+  for (let r = 0; r < rows; r++) {
+    const shift = (r % 3) * s / 3;
+    for (let k = 0; k < 2; k++) {
+      const x = (shift + k * s / 2) % s;
+      const tone = 0.88 + ((r * 7 + k * 3) % 5) * 0.035;
+      g.fillStyle = `rgba(${tone > 1 ? 255 : 0},${tone > 1 ? 240 : 0},0,${Math.abs(1 - tone) * 0.9})`;
+      g.fillRect(x, r * h, s / 2, h);
+      g.fillStyle = 'rgba(60,35,15,0.35)'; g.fillRect(x, r * h, 2, h);
     }
-  }, 1.6);
-}
-function tiles(base: string, grout: string, metersPerTile: number) {
-  return canvasTexture(256, (g, s) => {
-    g.fillStyle = grout; g.fillRect(0, 0, s, s);
-    const n = 2; const t = s / n;
-    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { g.fillStyle = base; g.fillRect(i * t + 2, j * t + 2, t - 4, t - 4); g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(i * t + 2, j * t + 2, t - 4, (t - 4) / 2); }
-  }, metersPerTile);
-}
+    g.fillStyle = 'rgba(60,35,15,0.35)'; g.fillRect(0, r * h, s, 2);
+    for (let i = 0; i < 14; i++) { g.strokeStyle = 'rgba(90,55,25,0.08)'; g.beginPath(); const y = r * h + Math.random() * h; g.moveTo(0, y); g.bezierCurveTo(s / 3, y + 4, s * 2 / 3, y - 4, s, y); g.stroke(); }
+  }
+});
+const tiles = (base: string, grout: string) => () => canvas(256, (g, s) => {
+  g.fillStyle = grout; g.fillRect(0, 0, s, s);
+  const n = 2; const t = s / n;
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { g.fillStyle = base; g.fillRect(i * t + 2, j * t + 2, t - 4, t - 4); g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(i * t + 2, j * t + 2, t - 4, (t - 4) / 2); }
+});
 
 const palette = {
-  wall: mat('#f1ece4', 0.92), skirting: mat('#e2dbcf', 0.5), lamp: mat('#ffffff', 0.4, { emissive: '#fff1d6', emissiveIntensity: 1.2 }), cap: mat('#3d3a44', 0.9), ceiling: mat('#fbfaf8', 0.95, { side: THREE.DoubleSide }),
-  glass: new THREE.MeshPhysicalMaterial({ color: '#cfe6f2', roughness: 0.05, transmission: 0.6, transparent: true, opacity: 0.35, metalness: 0 }),
-  frame: mat('#2f2f35', 0.5, { metalness: 0.4 }), door: mat('#d9c3a3', 0.7), sill: mat('#e9e6e1', 0.6),
-  fabric: mat('#8f9aa8', 0.95), fabricDark: mat('#59606d', 0.95), cushion: mat('#d9b98a', 0.95), linen: mat('#f2eee7', 0.95), blanket: mat('#5d7f8f', 0.95),
-  woodDark: mat('#6b4a32', 0.7), woodLight: mat('#c9a57a', 0.7), white: mat('#f7f7f5', 0.4), black: mat('#1e1e22', 0.4), steel: mat('#c9ccd0', 0.3, { metalness: 0.7 }),
-  porcelain: mat('#ffffff', 0.2), mirror: mat('#d7e3ea', 0.05, { metalness: 0.9 }), counterTop: mat('#3b3a3f', 0.35), rug: mat('#c8b9a6', 1), plant: mat('#4f8a4b', 0.9), pot: mat('#b9643f', 0.8), soil: mat('#4a3626', 1),
+  wall: m('#f1ece4', 0.92), skirting: m('#e2dbcf', 0.5), lamp: m('#ffffff', 0.4, { emissive: '#fff1d6', emissiveIntensity: 1.2 }), cap: m('#3d3a44', 0.9), ceiling: m('#fbfaf8', 0.95, { doubleSided: true }),
+  glass: m('#cfe6f2', 0.05, { alpha: 0.35, depthWrite: false }),
+  frame: m('#2f2f35', 0.5, { metalness: 0.4 }), door: m('#d9c3a3', 0.7), sill: m('#e9e6e1', 0.6),
+  fabric: m('#8f9aa8', 0.95), fabricDark: m('#59606d', 0.95), cushion: m('#d9b98a', 0.95), linen: m('#f2eee7', 0.95), blanket: m('#5d7f8f', 0.95),
+  woodDark: m('#6b4a32', 0.7), woodLight: m('#c9a57a', 0.7), white: m('#f7f7f5', 0.4), black: m('#1e1e22', 0.4), steel: m('#c9ccd0', 0.3, { metalness: 0.7 }),
+  porcelain: m('#ffffff', 0.2), mirror: m('#d7e3ea', 0.05, { metalness: 0.9 }), counterTop: m('#3b3a3f', 0.35), rug: m('#c8b9a6', 1), plant: m('#4f8a4b', 0.9), pot: m('#b9643f', 0.8), soil: m('#4a3626', 1),
 };
-const floorFor: Record<RoomKind, () => THREE.Material> = {
-  living: () => mat('#ffffff', 0.6, { map: wood('#b98b5e') }), bedroom: () => mat('#ffffff', 0.6, { map: wood('#c49a6c') }), suite: () => mat('#ffffff', 0.6, { map: wood('#c49a6c') }),
-  hall: () => mat('#ffffff', 0.6, { map: wood('#b98b5e') }), kitchen: () => mat('#ffffff', 0.4, { map: tiles('#e7e3dc', '#c9c3b8', 0.9) }),
-  bathroom: () => mat('#ffffff', 0.35, { map: tiles('#dfe3e4', '#b8bfc2', 0.6) }), service: () => mat('#ffffff', 0.4, { map: tiles('#e7e3dc', '#c9c3b8', 0.6) }),
-  balcony: () => mat('#ffffff', 0.6, { map: tiles('#c9b8a3', '#9e8e7a', 0.6) }), garden: () => mat('#6fa35a', 1),
+type Paint = keyof typeof palette;
+const floorFor: Record<RoomKind, Recipe> = {
+  living: m('#ffffff', 0.6, { tex: wood('#b98b5e'), tile: 1.6 }), bedroom: m('#ffffff', 0.6, { tex: wood('#c49a6c'), tile: 1.6 }), suite: m('#ffffff', 0.6, { tex: wood('#c49a6c'), tile: 1.6 }),
+  hall: m('#ffffff', 0.6, { tex: wood('#b98b5e'), tile: 1.6 }), kitchen: m('#ffffff', 0.4, { tex: tiles('#e7e3dc', '#c9c3b8'), tile: 0.9 }),
+  bathroom: m('#ffffff', 0.35, { tex: tiles('#dfe3e4', '#b8bfc2'), tile: 0.6 }), service: m('#ffffff', 0.4, { tex: tiles('#e7e3dc', '#c9c3b8'), tile: 0.6 }),
+  balcony: m('#ffffff', 0.6, { tex: tiles('#c9b8a3', '#9e8e7a'), tile: 0.6 }), garden: m('#6fa35a', 1),
 };
 
-function box(w: number, h: number, d: number, material: THREE.Material | THREE.Material[], x = 0, y = 0, z = 0) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-  mesh.position.set(x, y + h / 2, z); mesh.castShadow = true; mesh.receiveShadow = true;
-  return mesh;
+/**
+ * Modelo montado por peças (caixas, cilindros…) já transformadas, agrupadas por material;
+ * vira uma malha por material quando é colocado na cena.
+ */
+class Model {
+  readonly parts: { paint: Paint; geo: Geo; cast: boolean }[] = [];
+  add(paint: Paint, geo: Geo, cast = true) { this.parts.push({ paint, geo, cast }); return this; }
+  /** Inclui outro modelo com posição e giro (y). */
+  include(other: Model, x = 0, y = 0, z = 0, rotY = 0) {
+    const matrix = compose(x, y, z, 0, rotY, 0);
+    for (const p of other.parts) this.parts.push({ ...p, geo: transform(p.geo, matrix) });
+    return this;
+  }
 }
-function cylinder(r: number, h: number, material: THREE.Material, x = 0, y = 0, z = 0, top = r) {
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(top, r, h, 20), material);
-  mesh.position.set(x, y + h / 2, z); mesh.castShadow = true; mesh.receiveShadow = true;
-  return mesh;
-}
-const group = (...children: THREE.Object3D[]) => { const g = new THREE.Group(); g.add(...children); return g; };
+function box(w: number, h: number, d: number, paint: Paint, x = 0, y = 0, z = 0, cast = true) { return new Model().add(paint, translate(boxGeo(w, h, d), x, y + h / 2, z), cast); }
+function cylinder(r: number, h: number, paint: Paint, x = 0, y = 0, z = 0, top = r) { return new Model().add(paint, translate(cylinderGeo(top, r, h, 20), x, y + h / 2, z)); }
+const group = (...children: Model[]) => { const g = new Model(); for (const c of children) g.include(c); return g; };
 
 // ——— mobiliário (origem no centro da base; costas em -z, frente em +z) ———
 const furniture = {
   bed(w: number, d: number) {
-    const g = group(box(w, 0.3, d, palette.woodLight), box(w - 0.06, 0.22, d - 0.1, palette.linen, 0, 0.3, 0.03), box(w + 0.1, 1.05, 0.08, palette.woodDark, 0, 0, -d / 2 + 0.04), box(w - 0.04, 0.06, d * 0.58, palette.blanket, 0, 0.52, d * 0.2));
+    const g = group(box(w, 0.3, d, 'woodLight'), box(w - 0.06, 0.22, d - 0.1, 'linen', 0, 0.3, 0.03), box(w + 0.1, 1.05, 0.08, 'woodDark', 0, 0, -d / 2 + 0.04), box(w - 0.04, 0.06, d * 0.58, 'blanket', 0, 0.52, d * 0.2));
     const pillows = w > 1.2 ? [-w / 4, w / 4] : [0];
-    for (const x of pillows) g.add(box(Math.min(0.6, w / pillows.length - 0.1), 0.12, 0.35, palette.white, x, 0.52, -d / 2 + 0.3));
+    for (const x of pillows) g.include(box(Math.min(0.6, w / pillows.length - 0.1), 0.12, 0.35, 'white', x, 0.52, -d / 2 + 0.3));
     return g;
   },
-  nightstand: () => group(box(0.45, 0.5, 0.4, palette.woodDark), cylinder(0.09, 0.03, palette.black, 0, 0.5, 0), cylinder(0.02, 0.25, palette.steel, 0, 0.53, 0), cylinder(0.12, 0.16, palette.linen, 0, 0.75, 0, 0.08)),
+  nightstand: () => group(box(0.45, 0.5, 0.4, 'woodDark'), cylinder(0.09, 0.03, 'black', 0, 0.5, 0), cylinder(0.02, 0.25, 'steel', 0, 0.53, 0), cylinder(0.12, 0.16, 'linen', 0, 0.75, 0, 0.08)),
   wardrobe(w: number) {
-    const g = group(box(w, 2.1, 0.6, palette.white));
+    const g = group(box(w, 2.1, 0.6, 'white'));
     const doors = Math.max(2, Math.round(w / 0.5));
-    for (let i = 1; i < doors; i++) g.add(box(0.01, 2.0, 0.01, palette.frame, -w / 2 + (w / doors) * i, 0.05, 0.3));
-    for (let i = 0; i < doors; i++) g.add(box(0.02, 0.3, 0.02, palette.steel, -w / 2 + (w / doors) * (i + 0.5) + (i % 2 ? -0.08 : 0.08), 0.95, 0.31));
+    for (let i = 1; i < doors; i++) g.include(box(0.01, 2.0, 0.01, 'frame', -w / 2 + (w / doors) * i, 0.05, 0.3));
+    for (let i = 0; i < doors; i++) g.include(box(0.02, 0.3, 0.02, 'steel', -w / 2 + (w / doors) * (i + 0.5) + (i % 2 ? -0.08 : 0.08), 0.95, 0.31));
     return g;
   },
   sofa(w: number) {
     const d = 0.88;
-    const g = group(box(w, 0.42, d, palette.fabric), box(w, 0.42, 0.2, palette.fabric, 0, 0.42, -d / 2 + 0.1), box(0.16, 0.24, d, palette.fabric, -w / 2 + 0.08, 0.42), box(0.16, 0.24, d, palette.fabric, w / 2 - 0.08, 0.42));
+    const g = group(box(w, 0.42, d, 'fabric'), box(w, 0.42, 0.2, 'fabric', 0, 0.42, -d / 2 + 0.1), box(0.16, 0.24, d, 'fabric', -w / 2 + 0.08, 0.42), box(0.16, 0.24, d, 'fabric', w / 2 - 0.08, 0.42));
     const seats = Math.max(2, Math.round((w - 0.32) / 0.7));
     const sw = (w - 0.34) / seats;
-    for (let i = 0; i < seats; i++) g.add(box(sw - 0.03, 0.12, d - 0.26, palette.fabricDark, -w / 2 + 0.17 + sw * (i + 0.5), 0.42, 0.08));
-    g.add(box(0.4, 0.35, 0.12, palette.cushion, -w / 2 + 0.45, 0.5, -d / 2 + 0.28), box(0.4, 0.35, 0.12, palette.cushion, w / 2 - 0.45, 0.5, -d / 2 + 0.28));
+    for (let i = 0; i < seats; i++) g.include(box(sw - 0.03, 0.12, d - 0.26, 'fabricDark', -w / 2 + 0.17 + sw * (i + 0.5), 0.42, 0.08));
+    g.include(box(0.4, 0.35, 0.12, 'cushion', -w / 2 + 0.45, 0.5, -d / 2 + 0.28)).include(box(0.4, 0.35, 0.12, 'cushion', w / 2 - 0.45, 0.5, -d / 2 + 0.28));
     return g;
   },
   tv(w: number, panel = false) {
-    const g = group(box(w, 0.45, 0.4, palette.woodDark), box(Math.min(1.25, w - 0.2), 0.72, 0.05, palette.black, 0, 0.75, -0.08), box(0.3, 0.03, 0.2, palette.black, 0, 0.45, -0.05));
+    const g = group(box(w, 0.45, 0.4, 'woodDark'), box(Math.min(1.25, w - 0.2), 0.72, 0.05, 'black', 0, 0.75, -0.08), box(0.3, 0.03, 0.2, 'black', 0, 0.45, -0.05));
     // Sem parede atrás (sala integrada): painel ripado solto, como nas plantas humanizadas.
-    if (panel) for (let x = -w / 2 + 0.03; x < w / 2; x += 0.07) g.add(box(0.045, 2.1, 0.04, palette.woodLight, x, 0, -0.22));
+    if (panel) for (let x = -w / 2 + 0.03; x < w / 2; x += 0.07) g.include(box(0.045, 2.1, 0.04, 'woodLight', x, 0, -0.22));
     return g;
   },
-  coffeeTable: () => group(box(0.9, 0.04, 0.5, palette.woodLight, 0, 0.36), ...[[-0.4, -0.2], [0.4, -0.2], [-0.4, 0.2], [0.4, 0.2]].map(([x, z]) => box(0.04, 0.36, 0.04, palette.black, x, 0, z))),
-  rug: (w: number, d: number) => { const m = box(w, 0.01, d, palette.rug); m.castShadow = false; return group(m); },
+  coffeeTable: () => group(box(0.9, 0.04, 0.5, 'woodLight', 0, 0.36), ...[[-0.4, -0.2], [0.4, -0.2], [-0.4, 0.2], [0.4, 0.2]].map(([x, z]) => box(0.04, 0.36, 0.04, 'black', x, 0, z))),
+  rug: (w: number, d: number) => box(w, 0.01, d, 'rug', 0, 0, 0, false),
   dining(w: number, d: number) {
-    const g = group(box(w, 0.04, d, palette.woodLight, 0, 0.72), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => box(0.05, 0.72, 0.05, palette.woodDark, sx * (w / 2 - 0.08), 0, sz * (d / 2 - 0.08))));
-    const chair = (x: number, z: number, rot: number) => { const c = group(box(0.44, 0.45, 0.44, palette.fabricDark), box(0.44, 0.45, 0.06, palette.fabricDark, 0, 0.45, -0.19)); c.position.set(x, 0, z); c.rotation.y = rot; return c; };
+    const g = group(box(w, 0.04, d, 'woodLight', 0, 0.72), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => box(0.05, 0.72, 0.05, 'woodDark', sx * (w / 2 - 0.08), 0, sz * (d / 2 - 0.08))));
+    const chair = () => group(box(0.44, 0.45, 0.44, 'fabricDark'), box(0.44, 0.45, 0.06, 'fabricDark', 0, 0.45, -0.19));
     const seats = w > 1.3 ? [-w / 4, w / 4] : [0];
-    for (const x of seats) { g.add(chair(x, -d / 2 - 0.15, 0), chair(x, d / 2 + 0.15, Math.PI)); }
+    for (const x of seats) { g.include(chair(), x, 0, -d / 2 - 0.15, 0).include(chair(), x, 0, d / 2 + 0.15, Math.PI); }
     return g;
   },
   counter(w: number) {
-    const g = group(box(w, 0.86, 0.6, palette.white), box(w, 0.04, 0.62, palette.counterTop, 0, 0.86, 0.01));
-    if (w >= 1.2) { g.add(box(0.5, 0.02, 0.4, palette.steel, -w / 2 + 0.45, 0.89, 0.02)); g.add(cylinder(0.015, 0.3, palette.steel, -w / 2 + 0.45, 0.9, -0.22)); }
-    if (w >= 1.8) { g.add(box(0.58, 0.015, 0.5, palette.black, w / 2 - 0.5, 0.9, 0.02)); for (const [x, z] of [[-0.14, -0.12], [0.14, -0.12], [-0.14, 0.12], [0.14, 0.12]]) g.add(cylinder(0.07, 0.01, palette.steel, w / 2 - 0.5 + x, 0.915, 0.02 + z)); }
+    const g = group(box(w, 0.86, 0.6, 'white'), box(w, 0.04, 0.62, 'counterTop', 0, 0.86, 0.01));
+    if (w >= 1.2) g.include(box(0.5, 0.02, 0.4, 'steel', -w / 2 + 0.45, 0.89, 0.02)).include(cylinder(0.015, 0.3, 'steel', -w / 2 + 0.45, 0.9, -0.22));
+    if (w >= 1.8) { g.include(box(0.58, 0.015, 0.5, 'black', w / 2 - 0.5, 0.9, 0.02)); for (const [x, z] of [[-0.14, -0.12], [0.14, -0.12], [-0.14, 0.12], [0.14, 0.12]]) g.include(cylinder(0.07, 0.01, 'steel', w / 2 - 0.5 + x, 0.915, 0.02 + z)); }
     return g;
   },
-  upper: (w: number) => { const m = box(w, 0.7, 0.35, palette.white); m.position.y += 1.5; return group(m); },
-  fridge: () => group(box(0.7, 1.85, 0.68, palette.steel), box(0.02, 0.5, 0.03, palette.black, 0.3, 1.1, 0.35), box(0.02, 0.4, 0.03, palette.black, 0.3, 0.4, 0.35), box(0.7, 0.01, 0.01, palette.black, 0, 1.0, 0.345)),
-  toilet: () => group(box(0.38, 0.4, 0.2, palette.porcelain, 0, 0, -0.22), cylinder(0.19, 0.4, palette.porcelain, 0, 0, 0.08, 0.2), box(0.38, 0.4, 0.17, palette.porcelain, 0, 0.4, -0.25)),
-  vanity: (w = 0.8) => group(box(w, 0.8, 0.46, palette.woodDark), box(w + 0.02, 0.05, 0.48, palette.porcelain, 0, 0.8), cylinder(0.17, 0.02, palette.steel, 0, 0.84, 0.03), cylinder(0.012, 0.22, palette.steel, 0, 0.85, -0.17), box(w - 0.1, 0.8, 0.02, palette.mirror, 0, 1.15, -0.22)),
+  upper: (w: number) => box(w, 0.7, 0.35, 'white', 0, 1.5),
+  fridge: () => group(box(0.7, 1.85, 0.68, 'steel'), box(0.02, 0.5, 0.03, 'black', 0.3, 1.1, 0.35), box(0.02, 0.4, 0.03, 'black', 0.3, 0.4, 0.35), box(0.7, 0.01, 0.01, 'black', 0, 1.0, 0.345)),
+  toilet: () => group(box(0.38, 0.4, 0.2, 'porcelain', 0, 0, -0.22), cylinder(0.19, 0.4, 'porcelain', 0, 0, 0.08, 0.2), box(0.38, 0.4, 0.17, 'porcelain', 0, 0.4, -0.25)),
+  vanity: (w = 0.8) => group(box(w, 0.8, 0.46, 'woodDark'), box(w + 0.02, 0.05, 0.48, 'porcelain', 0, 0.8), cylinder(0.17, 0.02, 'steel', 0, 0.84, 0.03), cylinder(0.012, 0.22, 'steel', 0, 0.85, -0.17), box(w - 0.1, 0.8, 0.02, 'mirror', 0, 1.15, -0.22)),
   shower() {
     // Cano na parede do fundo até o chuveiro (nada flutua quando a maquete corta as paredes).
-    const arm = box(0.03, 0.03, 0.3, palette.steel, 0, 1.95, -0.28);
-    const g = group(box(0.9, 0.05, 0.9, palette.porcelain), box(0.9, 1.95, 0.01, palette.glass, 0, 0.05, 0.45), box(0.01, 1.95, 0.9, palette.glass, 0.45, 0.05, 0),
-      cylinder(0.015, 1.98, palette.steel, 0, 0, -0.43), arm, cylinder(0.1, 0.02, palette.steel, 0, 1.94, -0.14), box(0.12, 0.04, 0.03, palette.steel, 0.2, 1.05, -0.43));
-    for (const m of g.children) m.castShadow = false;
+    const g = group(box(0.9, 0.05, 0.9, 'porcelain', 0, 0, 0, false), box(0.9, 1.95, 0.01, 'glass', 0, 0.05, 0.45, false), box(0.01, 1.95, 0.9, 'glass', 0.45, 0.05, 0, false),
+      box(0.03, 0.03, 0.3, 'steel', 0, 1.95, -0.28, false), cylinder(0.015, 1.98, 'steel', 0, 0, -0.43), cylinder(0.1, 0.02, 'steel', 0, 1.94, -0.14), box(0.12, 0.04, 0.03, 'steel', 0.2, 1.05, -0.43, false));
+    for (const p of g.parts) p.cast = false;
     return g;
   },
-  washer: () => group(box(0.6, 0.85, 0.6, palette.white), cylinder(0.2, 0.02, palette.black, 0, 0.45, 0.3)),
-  tank: () => group(box(0.55, 0.85, 0.5, palette.white), box(0.45, 0.05, 0.35, palette.steel, 0, 0.83, 0.03)),
-  chair: () => group(box(0.5, 0.42, 0.5, palette.woodLight), box(0.5, 0.42, 0.06, palette.woodLight, 0, 0.42, -0.22)),
-  sideTable: () => group(cylinder(0.25, 0.03, palette.white, 0, 0.6, 0), cylinder(0.03, 0.6, palette.black)),
+  washer: () => group(box(0.6, 0.85, 0.6, 'white'), cylinder(0.2, 0.02, 'black', 0, 0.45, 0.3)),
+  tank: () => group(box(0.55, 0.85, 0.5, 'white'), box(0.45, 0.05, 0.35, 'steel', 0, 0.83, 0.03)),
+  chair: () => group(box(0.5, 0.42, 0.5, 'woodLight'), box(0.5, 0.42, 0.06, 'woodLight', 0, 0.42, -0.22)),
+  sideTable: () => group(cylinder(0.25, 0.03, 'white', 0, 0.6, 0), cylinder(0.03, 0.6, 'black')),
   plant(scale = 1) {
-    const foliage = new THREE.Mesh(new THREE.IcosahedronGeometry(0.32 * scale, 1), palette.plant);
-    foliage.position.y = 0.75 * scale; foliage.scale.y = 1.3; foliage.castShadow = true;
-    return group(cylinder(0.17 * scale, 0.42 * scale, palette.pot, 0, 0, 0, 0.2 * scale), cylinder(0.18 * scale, 0.02, palette.soil, 0, 0.41 * scale, 0), foliage);
+    const foliage = transform(icosahedron(0.32 * scale, 1), compose(0, 0.75 * scale, 0, 0, 0, 0, 1, 1.3, 1));
+    return group(cylinder(0.17 * scale, 0.42 * scale, 'pot', 0, 0, 0, 0.2 * scale), cylinder(0.18 * scale, 0.02, 'soil', 0, 0.41 * scale, 0)).add('plant', foliage);
   },
 };
 
@@ -173,7 +175,7 @@ const overlaps = (a: Box2, b: Box2) => a.x0 < b.x1 - 0.01 && a.x1 > b.x0 + 0.01 
 class Furnisher {
   readonly placed: Box2[] = [];
   readonly minX: number; readonly maxX: number; readonly minY: number; readonly maxY: number;
-  constructor(private readonly room: Room, private readonly obstacles: Box2[], private readonly out: THREE.Group, private readonly toWorld: (p: Point) => THREE.Vector3, private readonly walls: { a: Point; b: Point }[]) {
+  constructor(private readonly room: Room, private readonly obstacles: Box2[], private readonly out: (model: Model, at: Point, rotY: number) => void, private readonly walls: { a: Point; b: Point }[]) {
     const xs = room.points.map((p) => p[0]); const ys = room.points.map((p) => p[1]);
     this.minX = Math.min(...xs) + inset; this.maxX = Math.max(...xs) - inset; this.minY = Math.min(...ys) + inset; this.maxY = Math.max(...ys) - inset;
   }
@@ -222,7 +224,7 @@ class Furnisher {
   }
 
   /** Encosta o móvel numa parede; prefer: 'center' | 'start' | 'end' ou uma coordenada ao longo da parede. */
-  wall(model: THREE.Object3D, w: number, d: number, opts: { tall?: boolean; prefer?: 'center' | 'start' | 'end' | number; sides?: Side[]; loose?: boolean } = {}) {
+  wall(model: Model, w: number, d: number, opts: { tall?: boolean; prefer?: 'center' | 'start' | 'end' | number; sides?: Side[]; loose?: boolean } = {}) {
     for (const side of opts.sides ?? this.sides()) {
       if (side.to - side.from < w) continue;
       const lo = side.from + w / 2; const hi = side.to - w / 2;
@@ -239,7 +241,7 @@ class Furnisher {
 
   /** Móvel solto (mesa, tapete): posição livre mais próxima do ponto preferido. */
   /** margin: folga em volta; [largura, profundidade] quando difere (mesa: cadeiras só nos lados compridos). */
-  center(model: THREE.Object3D, w: number, d: number, near: Point, facing: Point = [0, 1], margin: number | [number, number] = 0, turnable = false): Placement | null {
+  center(model: Model, w: number, d: number, near: Point, facing: Point = [0, 1], margin: number | [number, number] = 0, turnable = false): Placement | null {
     if (turnable) return this.center(model, w, d, near, [0, 1], margin) ?? this.center(model, w, d, near, [1, 0], margin);
     let best: { b: Box2; score: number } | null = null;
     const swap = Math.abs(facing[0]) > 0.5;
@@ -258,12 +260,10 @@ class Furnisher {
     return this.put(model, b, facing, null, 0, 0, false);
   }
 
-  private put(model: THREE.Object3D, b: Box2, normal: Point, side: Side | null, u: number, margin = 0, track = true): Placement {
+  private put(model: Model, b: Box2, normal: Point, side: Side | null, u: number, margin = 0, track = true): Placement {
     if (track) this.placed.push({ x0: b.x0 - margin, x1: b.x1 + margin, y0: b.y0 - margin, y1: b.y1 + margin });
     const c: Point = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2];
-    model.position.copy(this.toWorld(c));
-    model.rotation.y = Math.atan2(normal[0], normal[1]);
-    this.out.add(model);
+    this.out(model, c, Math.atan2(normal[0], normal[1]));
     return { box: b, center: c, normal, side, u };
   }
   /** Lado em frente (normal contrária) que mais se sobrepõe ao trecho do móvel em u. */
@@ -343,32 +343,33 @@ function furnish(f: Furnisher, kind: RoomKind, home: { dining: boolean }) {
 
 export interface InteriorOptions { title: string; subtitle?: string; onClose?: () => void }
 
-/** Sobreposição em tela cheia com a planta 3D mobiliada. */
+/** Sobreposição em tela cheia com a planta 3D mobiliada (motor próprio, liberado ao fechar). */
 export class InteriorViewer {
   private readonly root: HTMLElement;
-  private readonly renderer: THREE.WebGLRenderer;
-  private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.PerspectiveCamera(50, 1, 0.05, 300);
-  private readonly controls: OrbitControls;
-  private readonly ceilings: THREE.Object3D[] = [];
-  private readonly lamps: THREE.Object3D[] = [];
-  private readonly sun = new THREE.DirectionalLight('#fff3e2', 2.2);
-  private readonly hemi = new THREE.HemisphereLight('#f5f7fb', '#b8ad9c', 1.1);
+  private engine: AbstractEngine | null = null;
+  private scene!: Scene;
+  private orbit!: ArcRotateCamera;
+  private walker!: UniversalCamera;
+  private sun!: DirectionalLight;
+  private hemi!: HemisphericLight;
+  private materials = new Map<string, PBRMaterial>();
+  private readonly ceilings: TransformNode[] = [];
+  private readonly lamps: (TransformNode | PointLight)[] = [];
   /** Paredes: na maquete ficam rebaixadas (corte a ~1,1 m) para mostrar os ambientes. */
-  private readonly wallGroups: THREE.Object3D[] = [];
+  private readonly wallGroups: TransformNode[] = [];
   private readonly walls: { a: Point; b: Point; t: number; doors: [number, number][] }[] = [];
   private readonly rooms: { room: Room; center: Point; look: Point }[] = [];
   private readonly keys = new Set<string>();
   private readonly offset: Point;
   private readonly size: number;
   private mode: 'model' | 'walk' = 'model';
-  private walk = { pos: new THREE.Vector3(), yaw: 0, pitch: 0 };
-  private glide: { from: THREE.Vector3; to: THREE.Vector3; fromYaw: number; toYaw: number; t: number } | null = null;
-  private frame = 0;
+  private walk = { pos: new Vector3(), yaw: 0, pitch: 0 };
+  private glide: { from: Vector3; to: Vector3; fromYaw: number; toYaw: number; t: number } | null = null;
   private last = performance.now();
+  private closed = false;
   private readonly onKey = (e: KeyboardEvent) => this.key(e);
   private readonly onKeyUp = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
-  private readonly onResize = () => this.resize();
+  private readonly onResize = () => this.engine?.resize();
 
   constructor(private readonly layout: PlanLayout, private readonly options: InteriorOptions) {
     const pts = [...layout.walls.flatMap((w) => [w.a, w.b]), ...layout.rooms.flatMap((r) => r.points)];
@@ -380,6 +381,7 @@ export class InteriorViewer {
     this.root = document.createElement('div');
     this.root.className = 'interior';
     this.root.innerHTML = `
+      <div class="interior-stage"></div>
       <div class="interior-top">
         <div class="interior-title"><b></b><small></small></div>
         <div class="card group"><button class="btn on" data-mode="model">⬚ Maquete</button><button class="btn" data-mode="walk">◉ Passeio</button></div>
@@ -392,73 +394,133 @@ export class InteriorViewer {
     (this.root.querySelector('.interior-title b') as HTMLElement).textContent = options.title;
     (this.root.querySelector('.interior-title small') as HTMLElement).textContent = options.subtitle ?? '';
     document.getElementById('app')!.appendChild(this.root);
-
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05;
-    this.root.prepend(this.renderer.domElement);
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; pmrem.dispose();
-    this.scene.environmentIntensity = 0.55;
-    this.scene.background = new THREE.Color('#e9ece8');
-
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true; this.controls.maxPolarAngle = THREE.MathUtils.degToRad(80);
-    this.controls.minDistance = 2; this.controls.maxDistance = this.size * 3;
-
-    this.build();
-    this.bind();
-    this.resize();
-    this.setMode('model');
-    this.loop();
+    this.root.querySelector('.interior-x')!.addEventListener('click', () => this.close());
+    window.addEventListener('keydown', this.onKey, true);
+    void this.init();
   }
 
-  private toWorld = ([x, y]: Point, h = 0) => new THREE.Vector3(x - this.offset[0], h, y - this.offset[1]);
+  private async init() {
+    const stage = this.root.querySelector('.interior-stage') as HTMLElement;
+    const { engine, canvas } = await createEngine(stage);
+    if (this.closed) { engine.dispose(); return; }
+    this.engine = engine;
+    engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio || 1, 2));
+    const scene = this.scene = new Scene(engine);
+    scene.useRightHandedSystem = true;
+    scene.clearColor = new Color4(0.9, 0.92, 0.9, 1);
+    scene.skipPointerMovePicking = true;
+    scene.environmentTexture = skyEnvironment(scene);
+    scene.environmentIntensity = 0.55;
+
+    this.orbit = new ArcRotateCamera('orbit', 0, 1, 10, new Vector3(0, 0.6, 0), scene);
+    this.orbit.minZ = 0.05; this.orbit.maxZ = 300; this.orbit.fov = deg(45);
+    this.orbit.upperBetaLimit = deg(80); this.orbit.lowerRadiusLimit = 2; this.orbit.upperRadiusLimit = this.size * 3;
+    this.orbit.wheelDeltaPercentage = 0.01; this.orbit.inertia = 0.85; this.orbit.panningSensibility = 300;
+    this.orbit.attachControl(false, false, 2);
+    this.walker = new UniversalCamera('walk', new Vector3(0, eye, 0), scene);
+    this.walker.minZ = 0.05; this.walker.maxZ = 300; this.walker.fov = deg(70); this.walker.inputs.clear();
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    const pipeline = new DefaultRenderingPipeline('interior', true, scene, [this.orbit, this.walker]);
+    pipeline.samples = 4; pipeline.fxaaEnabled = true; pipeline.bloomEnabled = false;
+    pipeline.imageProcessingEnabled = true;
+    pipeline.imageProcessing.toneMappingEnabled = true;
+    pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+    pipeline.imageProcessing.exposure = 1.05 / 0.6;
+
+    this.build();
+    this.bind(canvas);
+    window.addEventListener('keyup', this.onKeyUp);
+    window.addEventListener('resize', this.onResize);
+    this.setMode('model');
+    engine.runRenderLoop(() => this.loop());
+  }
+
+  private toWorld = ([x, y]: Point, h = 0) => new Vector3(x - this.offset[0], h, y - this.offset[1]);
+
+  private material(key: string, recipe: Recipe) {
+    if (!this.materials.has(key)) {
+      const { tex, tile, ...options } = recipe;
+      let map: DynamicTexture | null = null;
+      if (tex) {
+        map = new DynamicTexture(`${key}-tex`, tex(), this.scene, true);
+        map.update(true); map.wrapU = map.wrapV = Texture.WRAP_ADDRESSMODE;
+        map.uScale = map.vScale = 1 / (tile ?? 1); map.anisotropicFilteringLevel = 8;
+      }
+      this.materials.set(key, pbr(this.scene, key, { ...options, map, maxLights: 14 }));
+    }
+    return this.materials.get(key)!;
+  }
+
+  /** Coloca um modelo na cena: uma malha por material, sob um nó posicionado e girado. */
+  private place(model: Model, position: Vector3, rotY = 0, parent?: TransformNode) {
+    const node = new TransformNode('model', this.scene);
+    if (parent) node.parent = parent;
+    node.position.copyFrom(position); node.rotation.y = rotY;
+    const byKey = new Map<string, { paint: Paint; cast: boolean; geos: Geo[] }>();
+    for (const p of model.parts) {
+      const key = `${p.paint}|${p.cast}`;
+      if (!byKey.has(key)) byKey.set(key, { paint: p.paint, cast: p.cast, geos: [] });
+      byKey.get(key)!.geos.push(p.geo);
+    }
+    for (const part of byKey.values()) shadows(meshFrom(part.paint, merge(part.geos), this.scene, this.material(part.paint, palette[part.paint]), node), part.cast);
+    return node;
+  }
 
   private build() {
+    const scene = this.scene;
     const L = this.layout; const H = L.wallHeight;
     const s = this.size;
-    const sun = this.sun;
-    sun.position.set(s * 0.6, s * 1.4, s * 0.8); sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
-    Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 0.5, far: s * 4 });
-    this.scene.add(sun, sun.target, this.hemi);
+    this.sun = new DirectionalLight('sun', new Vector3(-0.6, -1.4, -0.8).normalize(), scene);
+    this.sun.diffuse = rgb('#fff3e2'); this.sun.intensity = 2.2;
+    this.sun.position = new Vector3(s * 0.6, s * 1.4, s * 0.8);
+    this.hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), scene);
+    this.hemi.diffuse = rgb('#f5f7fb'); this.hemi.groundColor = rgb('#b8ad9c'); this.hemi.intensity = 1.1 / Math.PI; this.hemi.specular.set(0, 0, 0);
+    const shadow = new ShadowGenerator(2048, this.sun);
+    shadow.usePercentageCloserFiltering = true; shadow.filteringQuality = ShadowGenerator.QUALITY_HIGH;
+    shadow.bias = 0.0008; shadow.normalBias = 0.01;
+    scene.onNewMeshAddedObservable.add(() => { dirty = true; });
+    let dirty = true;
+    scene.onBeforeRenderObservable.add(() => {
+      if (!dirty) return; dirty = false;
+      shadow.getShadowMap()!.renderList = scene.meshes.filter((mesh) => mesh.metadata?.castShadow === true && mesh.isEnabled());
+    });
+    this.refreshShadows = () => { dirty = true; };
 
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(s * 3, 48), mat('#d6d9d2', 1));
-    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; ground.receiveShadow = true;
-    this.scene.add(ground);
+    const disc = Array.from({ length: 48 }, (_, i) => { const t = (i / 48) * Math.PI * 2; return [Math.cos(t) * s * 3, Math.sin(t) * s * 3] as Point; });
+    shadows(meshFrom('ground', polygon(disc, -0.02), scene, this.material('ground', m('#d6d9d2', 1))), false);
 
     // Pisos e tetos por cômodo
     for (const room of L.rooms) {
-      const shape = new THREE.Shape(room.points.map(([x, y]) => new THREE.Vector2(x - this.offset[0], -(y - this.offset[1]))));
-      const floor = new THREE.Mesh(new THREE.ShapeGeometry(shape), floorFor[room.kind]());
-      floor.rotation.x = -Math.PI / 2; floor.position.y = 0.005; floor.receiveShadow = true;
-      this.scene.add(floor);
+      const pts = room.points.map(([x, y]) => [x - this.offset[0], y - this.offset[1]] as Point);
+      shadows(meshFrom(`floor-${room.id}`, polygon(pts, 0.005), scene, this.material(`floor-${room.kind}`, floorFor[room.kind])), false);
       if (room.kind !== 'balcony' && room.kind !== 'garden') {
-        const ceiling = new THREE.Mesh(new THREE.ShapeGeometry(shape), palette.ceiling);
-        ceiling.rotation.x = -Math.PI / 2; ceiling.position.y = H; ceiling.castShadow = true; this.ceilings.push(ceiling); this.scene.add(ceiling);
+        const ceiling = new TransformNode(`ceiling-${room.id}`, scene);
+        shadows(meshFrom(`ceiling-${room.id}`, polygon(pts, H), scene, this.material('ceiling', palette.ceiling), ceiling), true);
+        this.ceilings.push(ceiling);
         // Luminária de teto: luz quente que só acende no passeio.
         const [cx, cy] = centroid(room.points);
-        const lamp = new THREE.PointLight('#ffd9a8', room.kind === 'bathroom' || room.kind === 'service' ? 2.2 : 4.5, 0, 2);
-        lamp.position.copy(this.toWorld([cx, cy], H - 0.35));
-        const fixture = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.03, 24), palette.lamp);
-        fixture.position.copy(this.toWorld([cx, cy], H - 0.02));
-        this.lamps.push(lamp, fixture); this.scene.add(lamp, fixture);
+        const lamp = new PointLight(`lamp-${room.id}`, this.toWorld([cx, cy], H - 0.35), scene);
+        lamp.diffuse = rgb('#ffd9a8'); lamp.intensity = room.kind === 'bathroom' || room.kind === 'service' ? 2.2 : 4.5; lamp.specular = rgb('#ffd9a8').scale(0.3);
+        const fixture = this.place(new Model().add('lamp', cylinderGeo(0.18, 0.18, 0.03, 24), false), this.toWorld([cx, cy], H - 0.02));
+        this.lamps.push(lamp, fixture);
       }
     }
 
     // Paredes com vãos
     const obstacles: Box2[] = [];
-    const wallMaterials = [palette.wall, palette.wall, palette.cap, palette.wall, palette.wall, palette.wall];
     for (const wall of L.walls) {
       const len = Math.hypot(wall.b[0] - wall.a[0], wall.b[1] - wall.a[1]); const t = wall.thickness;
       const ux = (wall.b[0] - wall.a[0]) / len, uy = (wall.b[1] - wall.a[1]) / len;
-      const g = new THREE.Group(); g.position.copy(this.toWorld(wall.a)); g.rotation.y = -Math.atan2(uy, ux);
-      const piece = (s0: number, s1: number, y0: number, y1: number, material: THREE.Material | THREE.Material[] = wallMaterials, depth = t) => {
+      const model = new Model();
+      /** Trecho de parede (com rodapé no chão e topo escuro, que aparece como "corte" na maquete). */
+      const piece = (s0: number, s1: number, y0: number, y1: number, paint: Paint | null = null, depth = t) => {
         if (s1 - s0 < 0.005 || y1 - y0 < 0.005) return;
-        const m = box(s1 - s0, y1 - y0, depth, material, (s0 + s1) / 2, y0, 0); g.add(m);
-        if (y0 === 0 && material === wallMaterials) { const skirt = box(s1 - s0, 0.08, depth + 0.02, palette.skirting, (s0 + s1) / 2, 0, 0); skirt.castShadow = false; g.add(skirt); }
+        const at = (geo: Geo) => translate(geo, (s0 + s1) / 2, y0 + (y1 - y0) / 2, 0);
+        if (paint) { model.add(paint, at(boxGeo(s1 - s0, y1 - y0, depth))); return; }
+        model.add('wall', at(boxGeo(s1 - s0, y1 - y0, depth, ['px', 'nx', 'ny', 'pz', 'nz'])));
+        model.add('cap', at(boxGeo(s1 - s0, y1 - y0, depth, ['py'])));
+        if (y0 === 0) model.add('skirting', translate(boxGeo(s1 - s0, 0.08, depth + 0.02), (s0 + s1) / 2, 0.04, 0), false);
       };
       const openings = L.openings.filter((o) => o.wallId === wall.id).sort((p, q) => p.offset - q.offset);
       const doors: [number, number][] = [];
@@ -472,9 +534,9 @@ export class InteriorViewer {
         if (o.kind === 'window') {
           const sill = o.sill ?? 1.1; const top = Math.min(H - 0.05, sill + (o.height ?? 1.0));
           piece(s0, s1, 0, sill); piece(s0, s1, top, H);
-          piece(s0 - 0.02, s1 + 0.02, sill - 0.03, sill, palette.sill, t + 0.08);
-          const glass = box(s1 - s0 - 0.04, top - sill - 0.04, 0.02, palette.glass, (s0 + s1) / 2, sill + 0.02, 0); glass.castShadow = false; g.add(glass);
-          g.add(box(0.03, top - sill, 0.05, palette.frame, (s0 + s1) / 2, sill, 0));
+          piece(s0 - 0.02, s1 + 0.02, sill - 0.03, sill, 'sill', t + 0.08);
+          model.include(box(s1 - s0 - 0.04, top - sill - 0.04, 0.02, 'glass', (s0 + s1) / 2, sill + 0.02, 0, false));
+          model.include(box(0.03, top - sill, 0.05, 'frame', (s0 + s1) / 2, sill, 0));
           // Janela baixa impede só móveis altos na frente; janela alta (basculante) não impede nada.
           if (sill < 1.4) {
             const [hx, hy] = Math.abs(ux) > 0.5 ? [0.05, 0.45] : [0.45, 0.05];
@@ -486,17 +548,16 @@ export class InteriorViewer {
           doors.push([s0, s1]);
           if (o.kind === 'door') {
             // Folha aberta a ~75°, presa no início do vão.
-            const leaf = box(s1 - s0 - 0.02, top - 0.02, 0.035, palette.door, (s1 - s0) / 2, 0, 0);
-            const hinge = new THREE.Group(); hinge.position.set(s0 + 0.01, 0, t / 2); hinge.rotation.y = -THREE.MathUtils.degToRad(75); hinge.add(leaf);
-            g.add(hinge);
-            for (const u of [s0, s1]) g.add(box(0.04, top, t + 0.02, palette.door, u + (u === s0 ? 0.02 : -0.02), 0, 0));
+            const leaf = box(s1 - s0 - 0.02, top - 0.02, 0.035, 'door', (s1 - s0) / 2, 0, 0);
+            model.include(leaf, s0 + 0.01, 0, t / 2, -deg(75));
+            for (const u of [s0, s1]) model.include(box(0.04, top, t + 0.02, 'door', u + (u === s0 ? 0.02 : -0.02), 0, 0));
           } else {
             const half = (s1 - s0) / 2;
             for (const [k, z] of [[0, -0.02], [1, 0.02]] as const) {
-              const pane = box(half + 0.04, top - 0.04, 0.02, palette.glass, s0 + half * (k + 0.5) + (k ? -0.02 : 0.02), 0.02, z); pane.castShadow = false; g.add(pane);
-              g.add(box(0.04, top, 0.04, palette.frame, s0 + half * k + (k ? 0 : 0.02), 0, z));
+              model.include(box(half + 0.04, top - 0.04, 0.02, 'glass', s0 + half * (k + 0.5) + (k ? -0.02 : 0.02), 0.02, z, false));
+              model.include(box(0.04, top, 0.04, 'frame', s0 + half * k + (k ? 0 : 0.02), 0, z));
             }
-            g.add(box(s1 - s0, 0.04, t, palette.frame, (s0 + s1) / 2, top - 0.04, 0));
+            model.include(box(s1 - s0, 0.04, t, 'frame', (s0 + s1) / 2, top - 0.04, 0));
           }
           // Área livre do vão: ao longo da parede, a largura; para os dois lados, o giro da folha.
           const along = (s1 - s0) / 2 + 0.05; const across = o.kind === 'door' ? Math.min(0.75, s1 - s0) : 0.6;
@@ -508,18 +569,16 @@ export class InteriorViewer {
       }
       piece(cursor, len + t / 2, 0, H);
       this.walls.push({ a: wall.a, b: wall.b, t, doors });
-      this.wallGroups.push(g);
-      this.scene.add(g);
+      this.wallGroups.push(this.place(model, this.toWorld(wall.a), -Math.atan2(uy, ux)));
     }
 
     // Mobiliário
-    const furnitureGroup = new THREE.Group(); this.scene.add(furnitureGroup);
     const home = { dining: false };
     // Sala antes da cozinha: em plantas integradas a mesa de jantar fica num só lugar.
     const order: RoomKind[] = ['living', 'kitchen'];
     const rooms = [...L.rooms].sort((p, q) => (order.indexOf(p.kind) + 1 || 9) - (order.indexOf(q.kind) + 1 || 9));
     for (const room of rooms) {
-      const f = new Furnisher(room, obstacles, furnitureGroup, (p) => this.toWorld(p), L.walls);
+      const f = new Furnisher(room, obstacles, (model, at, rotY) => this.place(model, this.toWorld(at), rotY), L.walls);
       try { furnish(f, room.kind, home); } catch { /* cômodo irregular: segue sem mobiliário */ }
       const view = this.bestView(room, f);
       this.rooms.push({ room, center: view.pos, look: view.look });
@@ -529,6 +588,7 @@ export class InteriorViewer {
     list.innerHTML = this.rooms.map((r, i) => `<button data-i="${i}">${escapeHtml(r.room.name)}<small>${polygonArea(r.room.points).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} m² · ${roomLabel[r.room.kind]}</small></button>`).join('');
     list.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.addEventListener('click', () => this.goRoom(Number(b.dataset.i))));
   }
+  private refreshShadows = () => {};
 
   /**
    * Ponto de vista do passeio em cada cômodo: entre posições livres (longe das paredes e fora dos
@@ -565,18 +625,13 @@ export class InteriorViewer {
     return { pos: best.pos, look: [best.pos[0] + Math.cos(best.angle), best.pos[1] + Math.sin(best.angle)] };
   }
 
-  private bind() {
-    this.root.querySelector('.interior-x')!.addEventListener('click', () => this.close());
+  private bind(canvas: HTMLCanvasElement) {
     this.root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => b.addEventListener('click', () => this.setMode(b.dataset.mode as 'model' | 'walk')));
-    window.addEventListener('keydown', this.onKey, true);
-    window.addEventListener('keyup', this.onKeyUp);
-    window.addEventListener('resize', this.onResize);
-    const canvas = this.renderer.domElement;
     let drag: { x: number; y: number } | null = null;
     canvas.addEventListener('pointerdown', (e) => { if (this.mode === 'walk') { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); } });
     canvas.addEventListener('pointermove', (e) => {
       if (!drag || this.mode !== 'walk') return;
-      this.walk.yaw += (e.clientX - drag.x) * 0.004; this.walk.pitch = THREE.MathUtils.clamp(this.walk.pitch - (e.clientY - drag.y) * 0.003, -0.9, 0.7);
+      this.walk.yaw += (e.clientX - drag.x) * 0.004; this.walk.pitch = Math.min(0.7, Math.max(-0.9, this.walk.pitch - (e.clientY - drag.y) * 0.003));
       drag = { x: e.clientX, y: e.clientY }; this.glide = null;
     });
     canvas.addEventListener('pointerup', () => { drag = null; });
@@ -592,6 +647,7 @@ export class InteriorViewer {
     const k = e.key.toLowerCase();
     if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
       e.stopPropagation(); e.preventDefault();
+      if (!this.engine) return;
       if (this.mode !== 'walk') this.setMode('walk');
       this.keys.add(k);
     }
@@ -601,26 +657,27 @@ export class InteriorViewer {
     this.mode = mode;
     this.root.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
     this.root.classList.toggle('walking', mode === 'walk');
+    if (!this.engine) return;
     const walk = mode === 'walk';
-    for (const c of this.ceilings) c.visible = walk;
-    for (const l of this.lamps) l.visible = walk;
+    for (const c of this.ceilings) c.setEnabled(walk);
+    for (const l of this.lamps) l.setEnabled(walk);
     // Passeio: sol mais baixo entrando pelas janelas, luz difusa menor e luminárias acesas (mais contraste).
     const s = this.size;
     this.sun.position.set(s * 0.6, walk ? s * 0.55 : s * 1.4, s * 0.8);
+    this.sun.direction = this.sun.position.scale(-1).normalize();
     this.sun.intensity = walk ? 3.2 : 2.2;
-    this.hemi.intensity = walk ? 0.45 : 1.1;
+    this.hemi.intensity = (walk ? 0.45 : 1.1) / Math.PI;
     this.scene.environmentIntensity = walk ? 0.3 : 0.55;
-    for (const g of this.wallGroups) g.scale.y = mode === 'walk' ? 1 : 1.1 / this.layout.wallHeight;
-    this.controls.enabled = mode === 'model';
-    this.camera.fov = mode === 'walk' ? 70 : 45; this.camera.updateProjectionMatrix();
-    (this.root.querySelector('.interior-hint') as HTMLElement).textContent = mode === 'walk'
+    for (const g of this.wallGroups) g.scaling.y = walk ? 1 : 1.1 / this.layout.wallHeight;
+    this.refreshShadows();
+    this.scene.activeCamera = walk ? this.walker : this.orbit;
+    (this.root.querySelector('.interior-hint') as HTMLElement).textContent = walk
       ? 'Arraste para olhar · W A S D ou setas para andar · escolha um cômodo abaixo · Esc fecha'
       : 'Arraste para girar · botão direito move · roda aproxima · clique num cômodo para entrar';
-    if (mode === 'model') {
+    if (!walk) {
       this.glide = null;
-      this.controls.target.set(0, 0.6, 0);
-      this.camera.position.set(this.size * 0.3, this.size * 1.15, this.size * 0.75);
-      this.controls.update();
+      this.orbit.setTarget(new Vector3(0, 0.6, 0));
+      this.orbit.setPosition(new Vector3(this.size * 0.3, this.size * 1.15, this.size * 0.75));
     } else {
       const living = this.rooms.findIndex((r) => r.room.kind === 'living');
       this.goRoom(room ?? (living >= 0 ? living : 0), true);
@@ -631,10 +688,10 @@ export class InteriorViewer {
     const r = this.rooms[index]; if (!r) return;
     if (this.mode === 'model') { this.setMode('walk', index); return; }
     const to = this.toWorld(r.center, eye);
-    const dir = this.toWorld(r.look).sub(this.toWorld(r.center));
+    const dir = this.toWorld(r.look).subtract(this.toWorld(r.center));
     const yaw = Math.atan2(dir.x, -dir.z);
     this.walk.pitch = -0.08;
-    if (instant) { this.walk.pos.copy(to); this.walk.yaw = yaw; this.glide = null; return; }
+    if (instant) { this.walk.pos.copyFrom(to); this.walk.yaw = yaw; this.glide = null; return; }
     let target = yaw; while (target - this.walk.yaw > Math.PI) target -= Math.PI * 2; while (target - this.walk.yaw < -Math.PI) target += Math.PI * 2;
     this.glide = { from: this.walk.pos.clone(), to, fromYaw: this.walk.yaw, toYaw: target, t: 0 };
   }
@@ -664,8 +721,7 @@ export class InteriorViewer {
     this.glide = null;
   }
 
-  private loop = () => {
-    this.frame = requestAnimationFrame(this.loop);
+  private loop() {
     const now = performance.now(); const dt = Math.min(0.05, (now - this.last) / 1000); this.last = now;
     if (this.mode === 'walk') {
       const k = this.keys; const speed = 1.7 * dt;
@@ -676,34 +732,25 @@ export class InteriorViewer {
       if (fwd || strafe) this.step(fwd * speed, strafe * speed);
       if (this.glide) {
         const g = this.glide; g.t = Math.min(1, g.t + dt / 0.9); const e = g.t < 0.5 ? 2 * g.t * g.t : 1 - (-2 * g.t + 2) ** 2 / 2;
-        this.walk.pos.lerpVectors(g.from, g.to, e); this.walk.yaw = g.fromYaw + (g.toYaw - g.fromYaw) * e;
+        this.walk.pos = Vector3.Lerp(g.from, g.to, e); this.walk.yaw = g.fromYaw + (g.toYaw - g.fromYaw) * e;
         if (g.t >= 1) this.glide = null;
       }
       const { pos, yaw, pitch } = this.walk;
-      this.camera.position.copy(pos);
-      this.camera.lookAt(pos.x + Math.sin(yaw) * Math.cos(pitch), pos.y + Math.sin(pitch), pos.z - Math.cos(yaw) * Math.cos(pitch));
-    } else this.controls.update();
-    this.renderer.render(this.scene, this.camera);
-  };
-
-  private resize() {
-    const w = window.innerWidth, h = window.innerHeight;
-    this.renderer.setSize(w, h); this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+      this.walker.position.copyFrom(pos);
+      this.walker.setTarget(new Vector3(pos.x + Math.sin(yaw) * Math.cos(pitch), pos.y + Math.sin(pitch), pos.z - Math.cos(yaw) * Math.cos(pitch)));
+    }
+    this.scene.render();
   }
 
   close() {
-    cancelAnimationFrame(this.frame);
+    if (this.closed) return;
+    this.closed = true;
     window.removeEventListener('keydown', this.onKey, true);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('resize', this.onResize);
-    this.controls.dispose();
-    this.scene.traverse((o) => {
-      if (!(o instanceof THREE.Mesh)) return;
-      o.geometry.dispose();
-      for (const m of Array.isArray(o.material) ? o.material : [o.material]) { if (Object.values(palette).includes(m)) continue; (m as THREE.MeshStandardMaterial).map?.dispose(); m.dispose(); }
-    });
-    this.scene.environment?.dispose();
-    this.renderer.dispose();
+    this.engine?.stopRenderLoop();
+    this.scene?.dispose();
+    this.engine?.dispose();
     this.root.remove();
     this.options.onClose?.();
   }

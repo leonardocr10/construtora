@@ -1,12 +1,12 @@
-import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { DynamicTexture, TransformNode, Vector3, type Scene } from './babylon';
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
 import { buildCars, detectCars } from './lot-relief';
 import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, paintGround, type GroundMap } from './ground';
 import { buildAmenities } from './amenities';
 import { planParking } from './parking';
-import { buildPalms, crownGeometry, trunkGeometry } from './trees';
+import { buildPalms, buildTrees } from './trees';
+import { box, compose, merge, meshFrom, pbr, polygon, prism, shadows, transform, type Geo } from './geometry';
 
 /** Converte pixels da implantação para metros no referencial do terreno (antes da rotação do azimute). */
 export function pixelToSite(layout: SiteLayout, [px, py]: Point): Point {
@@ -82,25 +82,6 @@ function detectTrees(canvas: HTMLCanvasElement, lot: Point[], footprints: { x: n
   return found;
 }
 
-/** Árvores instanciadas: tronco com galhos e copa orgânica, com variação de cor, tamanho e giro. */
-function buildTrees(points: [number, number, number][]) {
-  const group = new THREE.Group();
-  const trunks = new THREE.InstancedMesh(trunkGeometry(), new THREE.MeshStandardMaterial({ color: 0x6a4d36, roughness: 1 }), points.length);
-  const crowns = new THREE.InstancedMesh(crownGeometry(), new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.9, flatShading: true }), points.length);
-  const dummy = new THREE.Object3D(); const color = new THREE.Color();
-  points.forEach(([x, z, size], i) => {
-    const trunk = size * 0.6; const spin = Math.random() * Math.PI * 2;
-    dummy.position.set(x, 0.33, z); dummy.rotation.set(0, spin, 0); dummy.scale.set(size * 0.5, trunk, size * 0.5); dummy.updateMatrix(); trunks.setMatrixAt(i, dummy.matrix);
-    const s = size * (0.95 + Math.random() * 0.2);
-    dummy.position.set(x, 0.33 + trunk + s * 0.55, z); dummy.rotation.set((Math.random() - 0.5) * 0.2, spin, (Math.random() - 0.5) * 0.2); dummy.scale.set(s, s * (0.85 + Math.random() * 0.2), s); dummy.updateMatrix();
-    crowns.setMatrixAt(i, dummy.matrix);
-    crowns.setColorAt(i, color.setHSL(0.24 + Math.random() * 0.08, 0.5 + Math.random() * 0.15, 0.3 + Math.random() * 0.08, THREE.SRGBColorSpace));
-  });
-  trunks.castShadow = crowns.castShadow = true; crowns.receiveShadow = true;
-  group.add(trunks, crowns);
-  return group;
-}
-
 /**
  * Pontos de palmeira ao longo do muro: a cada ~7 m, 1,8 m para dentro do lote, só onde o chão é grama
  * e longe de árvores já detectadas. Retorna pixels da arte.
@@ -136,53 +117,42 @@ function borderPalms(lot: Point[], ground: GroundMap, metersPerPixel: number, tr
 }
 
 /** Muro baixo no contorno do lote, como nas maquetes de vendas. */
-function buildWall(lot: Point[]) {
-  const parts: THREE.BufferGeometry[] = [];
+function buildWall(scene: Scene, parent: TransformNode, lot: Point[]) {
+  const parts: Geo[] = [];
   for (let i = 0; i < lot.length; i++) {
     const [ax, az] = lot[i]; const [bx, bz] = lot[(i + 1) % lot.length];
     const length = Math.hypot(bx - ax, bz - az); if (length < 0.5) continue;
-    const segment = new THREE.BoxGeometry(length, 1.6, 0.22);
-    segment.rotateY(-Math.atan2(bz - az, bx - ax));
-    segment.translate((ax + bx) / 2, 0.8, (az + bz) / 2);
-    parts.push(segment);
+    parts.push(transform(box(length, 1.6, 0.22), compose((ax + bx) / 2, 0.8, (az + bz) / 2, 0, -Math.atan2(bz - az, bx - ax), 0)));
   }
-  const wall = new THREE.Mesh(mergeGeometries(parts), new THREE.MeshStandardMaterial({ color: 0xe9e7e1, roughness: 0.9 }));
-  wall.castShadow = wall.receiveShadow = true;
-  return wall;
+  return shadows(meshFrom('lot-wall', merge(parts), scene, pbr(scene, 'lot-wall', { color: 0xe9e7e1, roughness: 0.9 }), parent), true);
 }
 
 export interface SiteResult {
-  group: THREE.Group; towers: TowerObject[]; lotWorld: Point[];
-  amenityAnchors: Map<string, THREE.Vector3>; roadAnchors: { name: string; position: THREE.Vector3 }[];
+  group: TransformNode; towers: TowerObject[]; lotWorld: Point[];
+  amenityAnchors: Map<string, Vector3>; roadAnchors: { name: string; position: Vector3 }[];
 }
 
 /**
  * Terreno do empreendimento: o lote recebe a própria arte da implantação como textura e as torres
  * paramétricas são erguidas sobre ela. O grupo é girado pelo azimute para casar com o mapa real.
  */
-export function buildSite(development: Development, siteImageUrl: string | null): SiteResult {
+export function buildSite(scene: Scene, development: Development, siteImageUrl: string | null): SiteResult {
   const layout = development.viewer.layout;
-  const group = new THREE.Group();
-  group.rotation.y = -THREE.MathUtils.degToRad(layout?.azimuth ?? 0);
+  const group = new TransformNode('site', scene);
+  group.rotation.y = -((layout?.azimuth ?? 0) * Math.PI) / 180;
+  group.computeWorldMatrix(true);
 
   let lotWorld: Point[] = [];
   if (layout?.lot?.length) {
     const lot = layout.lot.map((p) => pixelToSite(layout, p));
-    const contour = lot.map(([x, z]) => new THREE.Vector2(x, z));
-    const clockwise = THREE.ShapeUtils.isClockWise(contour);
-    const triangles = THREE.ShapeUtils.triangulateShape(clockwise ? [...contour].reverse() : contour, []);
-    const ordered = clockwise ? [...layout.lot].reverse() : layout.lot;
-    const orderedSite = clockwise ? [...lot].reverse() : lot;
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(orderedSite.flatMap(([x, z]) => [x, 0.18, z]), 3));
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(ordered.flatMap(([px, py]) => [px / layout.imageWidth, 1 - py / layout.imageHeight]), 2));
-    geometry.setIndex(triangles.flat().reverse());
-    geometry.computeVertexNormals();
-    const material = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+    const groundMaterial = pbr(scene, 'lot', { color: 0xffffff, roughness: 1, doubleSided: true });
+    let lotMesh = shadows(meshFrom('lot', polygon(lot, 0.18, (_, i) => [layout.lot![i][0] / layout.imageWidth, 1 - layout.lot![i][1] / layout.imageHeight]), scene, groundMaterial, group), false);
     if (siteImageUrl) {
       // Os marcadores numerados já existem em 3D: apaga os círculos pintados na arte para não duplicar.
       const markers = development.amenities.filter((a) => a.position).map((a) => [a.position!.x / layout.metersPerPixel + layout.origin[0], a.position!.z / layout.metersPerPixel + layout.origin[1]] as Point);
-      new THREE.ImageLoader().load(siteImageUrl, (image) => {
+      const image = new Image();
+      image.crossOrigin = 'anonymous';
+      image.onload = () => {
         const canvas = eraseMarkers(image, markers, layout.markerRadius ?? Math.round(layout.imageWidth * 0.0145));
         // Carros desenhados viram volumes 3D; o asfalto fica rebaixado em relação às calçadas e gramados.
         // Carros agrupados em fileiras alinhadas, com todas as vagas da fileira demarcadas.
@@ -192,16 +162,16 @@ export function buildSite(development: Development, siteImageUrl: string | null)
         const ground = classifyGround(canvas, layout.lot!, layout.metersPerPixel, parking.stalls, erased);
         const painted = paintGround(canvas, ground, layout.metersPerPixel, parking.stalls);
         // Áreas de lazer em 3D, a partir do nome e da arte em volta de cada marcador.
-        group.add(buildAmenities(canvas, layout.lot!, development.amenities, layout.metersPerPixel, layout.origin, (p) => pixelToSite(layout, p), asphaltLevel + curbHeight));
+        buildAmenities(scene, group, canvas, layout.lot!, development.amenities, layout.metersPerPixel, layout.origin, (p) => pixelToSite(layout, p), asphaltLevel + curbHeight);
         // Carro só onde o chão ficou asfalto (sombra de árvore no gramado não vira carro).
         const onAsphalt = (car: { x: number; y: number }) => {
           const gx = Math.round(car.x) - ground.x0; const gy = Math.round(car.y) - ground.y0;
           return gx >= 0 && gy >= 0 && gx < ground.w && gy < ground.h && ground.classes[gy * ground.w + gx] === 1;
         };
         // O carro inteiro precisa caber no lote, longe do muro: se encostar, desliza no próprio eixo até caber.
-        const m = 1 / layout.metersPerPixel; const lot = layout.lot!;
-        const clearOfWall = (x: number, y: number) => lot.every((a, i) => {
-          const b = lot[(i + 1) % lot.length]; const dx = b[0] - a[0], dy = b[1] - a[1]; const l2 = dx * dx + dy * dy || 1;
+        const m = 1 / layout.metersPerPixel; const lotPx = layout.lot!;
+        const clearOfWall = (x: number, y: number) => lotPx.every((a, i) => {
+          const b = lotPx[(i + 1) % lotPx.length]; const dx = b[0] - a[0], dy = b[1] - a[1]; const l2 = dx * dx + dy * dy || 1;
           const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2));
           return Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy)) > 0.35 * m;
         });
@@ -209,7 +179,7 @@ export function buildSite(development: Development, siteImageUrl: string | null)
           const ux = Math.cos(angle), uy = Math.sin(angle);
           return [[-2.25, -0.95], [2.25, -0.95], [2.25, 0.95], [-2.25, 0.95]].every(([l, w]) => {
             const px = x + (ux * l - uy * w) * m, py = y + (uy * l + ux * w) * m;
-            return insidePolygon([px, py], lot) && clearOfWall(px, py);
+            return insidePolygon([px, py], lotPx) && clearOfWall(px, py);
           });
         };
         const placed = parking.cars.filter(onAsphalt).flatMap((car) => {
@@ -219,44 +189,41 @@ export function buildSite(development: Development, siteImageUrl: string | null)
           }
           return [];
         });
-        group.add(buildCars(placed.map((car) => { const [x, z] = pixelToSite(layout, [car.x, car.y]); return { x, z, angle: car.angle, color: car.color }; })));
-        lotMesh.geometry.dispose();
-        lotMesh.geometry = buildGroundMesh(ground, (p) => pixelToSite(layout, p), { u: (px) => (px - ground.x0) / ground.w, v: (py) => 1 - (py - ground.y0) / ground.h });
-        const texture = new THREE.CanvasTexture(painted.canvas);
-        texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 16;
-        material.map = texture; material.needsUpdate = true;
-        lotMesh.material = [material, new THREE.MeshStandardMaterial({ color: 0xd4d1c8, roughness: 0.9, side: THREE.DoubleSide })];
+        buildCars(scene, group, placed.map((car) => { const [x, z] = pixelToSite(layout, [car.x, car.y]); return { x, z, angle: car.angle, color: car.color }; }));
+        const meshes = buildGroundMesh(ground, (p) => pixelToSite(layout, p), { u: (px) => (px - ground.x0) / ground.w, v: (py) => 1 - (py - ground.y0) / ground.h });
+        const texture = new DynamicTexture('lot-art', painted.canvas, scene, true);
+        texture.anisotropicFilteringLevel = 16;
+        texture.update(true);
+        groundMaterial.albedoTexture = texture;
+        lotMesh.dispose();
+        lotMesh = shadows(meshFrom('lot', meshes.top, scene, groundMaterial, group), false);
+        shadows(meshFrom('lot-curbs', meshes.side, scene, pbr(scene, 'curb', { color: 0xd4d1c8, roughness: 0.9, doubleSided: true }), group), false);
         const footprints = development.buildings.filter((b) => b.position).map((b) => ({ x: b.position!.x / layout.metersPerPixel + layout.origin[0], y: b.position!.z / layout.metersPerPixel + layout.origin[1], r: Math.hypot(b.model3d?.width ?? 30, b.model3d?.depth ?? 16) / 2 / layout.metersPerPixel + 4 }));
         const trees = detectTrees(canvas, layout.lot!, footprints, layout.metersPerPixel);
         const place = (list: typeof trees) => list.map(([px, py, size]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, size] as [number, number, number]; });
-        if (trees.length) group.add(buildTrees(place(trees)));
+        if (trees.length) buildTrees(scene, group, place(trees));
         // Palmeiras em fileira nas faixas de grama junto ao muro (paisagismo típico), longe das árvores.
         const palms = borderPalms(layout.lot!, ground, layout.metersPerPixel, trees);
-        if (palms.length) group.add(buildPalms(palms.map(([px, py]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, 3] as [number, number, number]; })));
-      });
+        if (palms.length) buildPalms(scene, group, palms.map(([px, py]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, 3] as [number, number, number]; }));
+      };
+      image.src = siteImageUrl;
     }
-    const lotMesh = new THREE.Mesh<THREE.BufferGeometry, THREE.Material | THREE.Material[]>(geometry, material);
-    lotMesh.receiveShadow = true;
-    group.add(lotMesh);
     // Meio-fio em volta do lote.
-    const edge = new THREE.Mesh(new THREE.ExtrudeGeometry(new THREE.Shape(lot.map(([x, z]) => new THREE.Vector2(x, -z))), { depth: 0.16, bevelEnabled: false }).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xd9d6cc }));
-    edge.receiveShadow = true;
-    group.add(edge);
-    group.add(buildWall(lot));
+    shadows(meshFrom('lot-edge', prism(lot, 0, 0.16), scene, pbr(scene, 'lot-edge', { color: 0xd9d6cc, roughness: 1 }), group), false);
+    buildWall(scene, group, lot);
   }
 
-  const towers = development.buildings.map((building) => buildTower(building));
-  for (const tower of towers) group.add(tower.group);
-  group.updateMatrixWorld(true);
+  const towers = development.buildings.map((building) => buildTower(scene, building, group));
   // Recalcula as âncoras já com a rotação do terreno aplicada.
   for (const tower of towers) {
-    tower.center.set(0, tower.height / 2, 0).applyMatrix4(tower.group.matrixWorld);
-    tower.top.set(0, tower.height + 6, 0).applyMatrix4(tower.group.matrixWorld);
+    const matrix = tower.group.computeWorldMatrix(true);
+    Vector3.TransformCoordinatesToRef(new Vector3(0, tower.height / 2, 0), matrix, tower.center);
+    Vector3.TransformCoordinatesToRef(new Vector3(0, tower.height + 6, 0), matrix, tower.top);
   }
 
-  const toWorld = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z).applyMatrix4(group.matrixWorld);
+  const toWorld = (x: number, y: number, z: number) => Vector3.TransformCoordinates(new Vector3(x, y, z), group.getWorldMatrix());
   if (layout?.lot?.length) lotWorld = layout.lot.map((p) => { const [x, z] = pixelToSite(layout, p); const v = toWorld(x, 0, z); return [v.x, v.z] as Point; });
-  const amenityAnchors = new Map<string, THREE.Vector3>();
+  const amenityAnchors = new Map<string, Vector3>();
   for (const amenity of development.amenities) if (amenity.position) amenityAnchors.set(amenity.id, toWorld(amenity.position.x, 3, amenity.position.z));
   const roadAnchors = (layout?.roads ?? []).map((road) => {
     const mid = road.points.length === 2

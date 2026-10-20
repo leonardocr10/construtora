@@ -1,21 +1,22 @@
-import * as THREE from 'three';
+import { TransformNode, type Color3, type Matrix, type Scene } from './babylon';
+import { box, compose, cylinder, extrude, getHsl, hsl, instanced, pbr, rgb, rotateX, shadows, srgb, translate, type Geo } from './geometry';
 import type { Point } from '../types';
 
 /** Altura da superfície do lote (asfalto) e do que fica acima dela (calçadas, gramados): o degrau é o meio-fio. */
 export const lotBase = 0.18;
 
 /** Aproxima a cor desenhada para uma cor de carro real (branco, prata, grafite, preto, vermelho, azul). */
-function carColor(rgb: [number, number, number] | null) {
-  if (!rgb) return fleetColor(Math.random() * 1000);
-  const [r, g, b] = rgb; const lum = 0.3 * r + 0.59 * g + 0.11 * b; const sat = (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(1, Math.max(r, g, b));
+function carColor(drawn: [number, number, number] | null) {
+  if (!drawn) return fleetColor(Math.random() * 1000);
+  const [r, g, b] = drawn; const lum = 0.3 * r + 0.59 * g + 0.11 * b; const sat = (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(1, Math.max(r, g, b));
   if (sat > 0.28) {
-    const hue = new THREE.Color(`rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`).getHSL({ h: 0, s: 0, l: 0 }).h;
+    const hue = getHsl(srgb(r, g, b)).h;
     // Laranja/amarelo costuma ser a faixa da vaga pintada, não o carro: usa a frota comum.
     if (hue > 0.04 && hue < 0.2) return fleetColor(r * 7 + g * 13 + b * 17);
-    return new THREE.Color().setHSL(hue, 0.62, 0.36, THREE.SRGBColorSpace);
+    return hsl(hue, 0.62, 0.36);
   }
-  if (lum > 175) return new THREE.Color(0xf1f1ee);
-  if (lum > 125) return new THREE.Color(0xb6b9bd);
+  if (lum > 175) return rgb(0xf1f1ee);
+  if (lum > 125) return rgb(0xb6b9bd);
   return fleetColor(r * 7 + g * 13 + b * 17);
 }
 
@@ -23,11 +24,11 @@ function carColor(rgb: [number, number, number] | null) {
 function fleetColor(seed: number) {
   const fleet: [number, number][] = [[0xf1f1ee, 0.3], [0xb6b9bd, 0.2], [0x1d1e22, 0.18], [0x55595f, 0.14], [0x9e2a2b, 0.09], [0x2b4a7a, 0.09]];
   let t = (Math.sin(seed * 12.9898) * 43758.5453) % 1; t = t < 0 ? t + 1 : t;
-  for (const [hex, weight] of fleet) { if (t < weight) return new THREE.Color(hex); t -= weight; }
-  return new THREE.Color(fleet[0][0]);
+  for (const [hex, weight] of fleet) { if (t < weight) return rgb(hex); t -= weight; }
+  return rgb(fleet[0][0]);
 }
 
-export interface DetectedCar { x: number; y: number; angle: number; color: THREE.Color }
+export interface DetectedCar { x: number; y: number; angle: number; color: Color3 }
 
 function insidePolygon([x, y]: Point, polygon: Point[]) {
   let inside = false;
@@ -150,52 +151,45 @@ export function detectCars(canvas: HTMLCanvasElement, lot: Point[], metersPerPix
   return cars;
 }
 
-/** Perfil lateral (x ao longo do carro, y altura) extrudado na largura e centrado. */
-function profile(points: [number, number][], width: number, bevel = 0.06) {
-  const shape = new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y)));
-  const geometry = new THREE.ExtrudeGeometry(shape, { depth: width - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2, curveSegments: 4 });
-  geometry.translate(0, 0, -(width - bevel * 2) / 2);
-  return geometry;
+/** Perfil lateral (x ao longo do carro, y altura) extrudado na largura e centrado (o chanfro vira um leve acréscimo no perfil). */
+function profile(points: [number, number][], width: number, bevel = 0.06): Geo {
+  // Afasta cada vértice do centro do perfil pelo tamanho do chanfro, como o bevelSize da extrusão do Three.
+  const cx = points.reduce((s, p) => s + p[0], 0) / points.length; const cy = points.reduce((s, p) => s + p[1], 0) / points.length;
+  const grown = points.map(([x, y]) => { const d = Math.hypot(x - cx, y - cy) || 1; return [x + ((x - cx) / d) * bevel, y + ((y - cy) / d) * bevel] as [number, number]; });
+  return translate(extrude(grown, width), 0, 0, -width / 2);
 }
 
 /**
  * Carros 3D instanciados com perfil de hatch/sedã: carroceria na cor detectada na arte, vidros escuros,
  * teto na cor do carro, rodas com calota, faróis e lanternas. Comprimento 4,3 m e largura 1,8 m.
  */
-export function buildCars(cars: { x: number; z: number; angle: number; color: THREE.Color }[]) {
-  const group = new THREE.Group();
+export function buildCars(scene: Scene, parent: TransformNode, cars: { x: number; z: number; angle: number; color: Color3 }[]) {
+  const group = new TransformNode('cars', scene); group.parent = parent;
   if (!cars.length) return group;
   const W = 1.78;
   const lower = profile([[-2.15, 0.28], [2.12, 0.28], [2.18, 0.5], [2.08, 0.72], [1.2, 0.86], [-1.75, 0.92], [-2.12, 0.86], [-2.18, 0.5]], W);
   const glassShape = profile([[1.18, 0.84], [0.42, 1.36], [-1.05, 1.38], [-1.72, 0.9]], W * 0.9, 0.04);
   const roofShape = profile([[0.36, 1.37], [0.4, 1.42], [-1.02, 1.44], [-1.06, 1.38]], W * 0.86, 0.03);
-  const wheel = new THREE.CylinderGeometry(0.33, 0.33, 0.24, 14).rotateX(Math.PI / 2);
-  const hub = new THREE.CylinderGeometry(0.19, 0.19, 0.26, 10).rotateX(Math.PI / 2);
-  const light = new THREE.BoxGeometry(0.06, 0.12, 0.38);
-  const paint = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.45 });
-  const parts = {
-    body: new THREE.InstancedMesh(lower, paint, cars.length),
-    roof: new THREE.InstancedMesh(roofShape, paint, cars.length),
-    glass: new THREE.InstancedMesh(glassShape, new THREE.MeshStandardMaterial({ color: 0x1c252e, roughness: 0.08, metalness: 0.6 }), cars.length),
-    wheels: new THREE.InstancedMesh(wheel, new THREE.MeshStandardMaterial({ color: 0x18181a, roughness: 0.85 }), cars.length * 4),
-    hubs: new THREE.InstancedMesh(hub, new THREE.MeshStandardMaterial({ color: 0xb9bcc0, roughness: 0.35, metalness: 0.7 }), cars.length * 4),
-    head: new THREE.InstancedMesh(light, new THREE.MeshStandardMaterial({ color: 0xf4f1e4, emissive: 0x3a382e, roughness: 0.2 }), cars.length * 2),
-    tail: new THREE.InstancedMesh(light, new THREE.MeshStandardMaterial({ color: 0xa3141b, emissive: 0x2a0204, roughness: 0.3 }), cars.length * 2),
-  };
-  const car = new THREE.Object3D(); const part = new THREE.Object3D(); const matrix = new THREE.Matrix4();
-  const place = (mesh: THREE.InstancedMesh, index: number, x: number, y: number, z: number) => {
-    part.position.set(x, y, z); part.updateMatrix(); matrix.multiplyMatrices(car.matrix, part.matrix); mesh.setMatrixAt(index, matrix);
-  };
-  cars.forEach((c, i) => {
-    car.position.set(c.x, lotBase, c.z); car.rotation.set(0, -c.angle, 0); car.updateMatrix();
-    place(parts.body, i, 0, 0, 0); place(parts.roof, i, 0, 0, 0); place(parts.glass, i, 0, 0, 0);
-    parts.body.setColorAt(i, c.color); parts.roof.setColorAt(i, c.color);
-    let k = 0;
-    for (const fx of [-1.38, 1.38]) for (const fz of [-0.8, 0.8]) { place(parts.wheels, i * 4 + k, fx, 0.33, fz); place(parts.hubs, i * 4 + k, fx, 0.33, fz); k++; }
-    place(parts.head, i * 2, 2.15, 0.6, -0.58); place(parts.head, i * 2 + 1, 2.15, 0.6, 0.58);
-    place(parts.tail, i * 2, -2.16, 0.68, -0.6); place(parts.tail, i * 2 + 1, -2.16, 0.68, 0.6);
-  });
-  for (const mesh of Object.values(parts)) { mesh.castShadow = true; mesh.instanceMatrix.needsUpdate = true; group.add(mesh); }
-  parts.body.receiveShadow = true;
+  const wheel = rotateX(cylinder(0.33, 0.33, 0.24, 14), Math.PI / 2);
+  const hub = rotateX(cylinder(0.19, 0.19, 0.26, 10), Math.PI / 2);
+  const light = box(0.06, 0.12, 0.38);
+  const paint = pbr(scene, 'car-paint', { color: 0xffffff, roughness: 0.3, metalness: 0.45 });
+  const lists = { body: [] as Matrix[], wheels: [] as Matrix[], head: [] as Matrix[], tail: [] as Matrix[] };
+  for (const c of cars) {
+    const car = compose(c.x, lotBase, c.z, 0, -c.angle, 0);
+    const place = (list: Matrix[], x: number, y: number, z: number) => list.push(compose(x, y, z).multiply(car));
+    place(lists.body, 0, 0, 0);
+    for (const fx of [-1.38, 1.38]) for (const fz of [-0.8, 0.8]) place(lists.wheels, fx, 0.33, fz);
+    place(lists.head, 2.15, 0.6, -0.58); place(lists.head, 2.15, 0.6, 0.58);
+    place(lists.tail, -2.16, 0.68, -0.6); place(lists.tail, -2.16, 0.68, 0.6);
+  }
+  const colors = cars.map((c) => c.color);
+  shadows(instanced('car-body', lower, scene, paint, lists.body, group, colors), true, true);
+  shadows(instanced('car-roof', roofShape, scene, paint, lists.body, group, colors), true, false);
+  shadows(instanced('car-glass', glassShape, scene, pbr(scene, 'car-glass', { color: 0x1c252e, roughness: 0.08, metalness: 0.6 }), lists.body, group), true, false);
+  shadows(instanced('car-wheels', wheel, scene, pbr(scene, 'car-wheel', { color: 0x18181a, roughness: 0.85 }), lists.wheels, group), true, false);
+  shadows(instanced('car-hubs', hub, scene, pbr(scene, 'car-hub', { color: 0xb9bcc0, roughness: 0.35, metalness: 0.7 }), lists.wheels, group), false, false);
+  shadows(instanced('car-head', light, scene, pbr(scene, 'car-head', { color: 0xf4f1e4, emissive: 0x3a382e, roughness: 0.2 }), lists.head, group), false, false);
+  shadows(instanced('car-tail', light, scene, pbr(scene, 'car-tail', { color: 0xa3141b, emissive: 0x2a0204, roughness: 0.3 }), lists.tail, group), false, false);
   return group;
 }

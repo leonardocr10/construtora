@@ -1,13 +1,14 @@
 import './styles.css';
-import * as THREE from 'three';
 import { api } from './api';
+import { Vector3, type AbstractMesh } from './scene/babylon';
 import { World } from './scene/world';
 import { buildSite, type SiteResult } from './scene/site';
 import { buildSurroundings } from './scene/surroundings';
 import { InteriorViewer } from './scene/interior';
 import { bindTowerHover } from './scene/hover';
-import type { TowerObject } from './scene/tower';
-import type { Development, FloorPlan, Unit, UnitStatus } from './types';
+import { defaultSlots, type TowerObject } from './scene/tower';
+import { qualityLevels, qualityOrder, type QualityLevel } from './scene/quality';
+import type { Development, FloorPlan, Point, Unit, UnitStatus } from './types';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -24,10 +25,14 @@ let dev: Development; let site: SiteResult; let world: World;
 const towerLabels = new Map<string, HTMLButtonElement>();
 const amenityLabels: HTMLElement[] = [];
 let floorLabel: { element: HTMLElement; remove: () => void } | null = null;
+/** Rótulos com o número de cada apartamento do andar escolhido. */
+let unitLabels: { unitId: string; element: HTMLElement; remove: () => void }[] = [];
 let touring = false;
 
 const available = (units: Unit[]) => units.filter((u) => u.status === 'AVAILABLE').length;
 const planOf = (unit: Unit): FloorPlan | undefined => dev.floorPlans.find((p) => p.id === unit.floorPlanId);
+/** Centro (mundo) do conjunto do empreendimento, na altura pedida. */
+const siteCenter = (y: number) => { const { min, max } = site.group.getHierarchyBoundingVectors(); return new Vector3((min.x + max.x) / 2, y, (min.z + max.z) / 2); };
 
 async function start() {
   try {
@@ -40,11 +45,11 @@ async function start() {
   if (dev.theme?.primaryColor) document.documentElement.style.setProperty('--accent', dev.theme.primaryColor);
   if (dev.theme?.secondaryColor) document.documentElement.style.setProperty('--dark', dev.theme.secondaryColor);
 
-  world = new World($('stage'), $('labels'));
+  world = await World.create($('stage'), $('labels'));
   const siteImage = dev.viewer.layout?.siteImageAssetId ? api.assetUrl(dev.viewer.layout.siteImageAssetId) : null;
-  site = buildSite(dev, siteImage);
-  world.scene.add(site.group);
+  site = buildSite(world.scene, dev, siteImage);
   world.onDusk((t) => { for (const tower of site.towers) tower.setDusk(t); });
+  world.onInteract(() => { touring = false; });
 
   renderChrome();
   createLabels();
@@ -55,19 +60,19 @@ async function start() {
   overview(0.01);
 
   $('loading-text').textContent = 'Carregando o entorno real (OpenStreetMap)';
+  const renderer = world.webgpu ? 'WebGPU' : 'WebGL2';
   try {
     const surroundings = await api.surroundings(slug);
-    const result = buildSurroundings(surroundings, site.lotWorld);
-    world.scene.add(result.group);
+    const result = buildSurroundings(world.scene, surroundings, site.lotWorld);
     const own = new Set(site.roadAnchors.map((r) => r.name.split(',')[0].toLowerCase()));
     for (const road of result.roadLabels) {
       if ([...own].some((name) => road.name.toLowerCase().includes(name.replace('av. ', 'avenida ')))) continue;
       const element = document.createElement('div'); element.className = 'label road major'; element.textContent = road.name;
       world.addLabel(element, road.position, { maxDistance: 1400 });
     }
-    $('sources').innerHTML = `Entorno real <em>OSM</em>${result.illustrativeHouses ? ' <em class="dashed">casas ilustrativas</em>' : ''}`;
+    $('sources').innerHTML = `Entorno real <em>OSM</em>${result.illustrativeHouses ? ' <em class="dashed">casas ilustrativas</em>' : ''} <em title="Motor de renderização">${renderer}</em>`;
   } catch {
-    $('sources').innerHTML = 'Entorno indisponível no momento';
+    $('sources').innerHTML = `Entorno indisponível no momento <em>${renderer}</em>`;
   }
   $('loading').style.opacity = '0';
   setTimeout(() => $('loading').remove(), 500);
@@ -104,7 +109,9 @@ function renderViews() {
   el.classList.toggle('collapsed', viewsCollapsed);
   el.innerHTML = `<button id="views-toggle" title="Mostrar ou recolher as vistas">${viewsCollapsed ? '▸' : '▾'}<span class="t">Vistas</span></button>${views.map(([icon, label], i) => `<button data-i="${i}" title="Vista ${label.toLowerCase()}">${icon}<span class="t">${label}</span></button>`).join('')}<hr>
     <button id="numbers" title="Mostrar ou ocultar os números do lazer">①<span class="t">${numbersVisible ? 'Ocultar números' : 'Mostrar números'}</span></button>
-    <button id="fullscreen" title="Tela cheia">⛶<span class="t">Tela cheia</span></button>`;
+    <button id="fullscreen" title="Tela cheia">⛶<span class="t">Tela cheia</span></button>
+    <label class="quality" title="Qualidade gráfica (sombras, oclusão, antisserrilhado e resolução)">◆<span class="t">Qualidade</span>
+      <select id="quality">${qualityOrder.map((q) => `<option value="${q}" ${q === world.quality ? 'selected' : ''}>${qualityLevels[q].label}</option>`).join('')}</select></label>`;
   el.querySelectorAll<HTMLButtonElement>('[data-i]').forEach((b) => b.addEventListener('click', () => { touring = false; back(true); views[Number(b.dataset.i)][2](); }));
   $('views-toggle').addEventListener('click', () => {
     viewsCollapsed = !viewsCollapsed; el.classList.toggle('collapsed', viewsCollapsed);
@@ -117,6 +124,9 @@ function renderViews() {
     else void document.documentElement.requestFullscreen?.();
   });
   document.addEventListener('fullscreenchange', () => { $('fullscreen').innerHTML = document.fullscreenElement ? '⤢<span class="t">Sair da tela cheia</span>' : '⛶<span class="t">Tela cheia</span>'; });
+  const select = $<HTMLSelectElement>('quality');
+  select.addEventListener('change', () => world.setQuality(select.value as QualityLevel));
+  world.onQualityChange((level) => { select.value = level; });
 }
 
 let viewsCollapsed = (() => { try { return localStorage.getItem('vistahub.views') === 'closed'; } catch { return false; } })();
@@ -124,17 +134,16 @@ let viewsCollapsed = (() => { try { return localStorage.getItem('vistahub.views'
 /** Bússola: a agulha aponta para o norte real (-z no mapa) conforme a câmera gira; clique alinha o norte para cima. */
 function bindCompass() {
   const needle = document.getElementById('compass-needle'); if (!needle) return;
-  const dir = new THREE.Vector3();
   world.onTick(() => {
-    dir.subVectors(world.controls.target, world.camera.position);
+    const dir = world.target.subtract(world.cameraPosition);
     const heading = Math.atan2(dir.x, -dir.z); // 0 = olhando para o norte
     needle.style.transform = `rotate(${(-heading * 180) / Math.PI}deg)`;
   });
   $('compass').addEventListener('click', () => {
     touring = false;
-    const target = world.controls.target.clone(); const offset = new THREE.Vector3().subVectors(world.camera.position, target);
+    const target = world.target.clone(); const offset = world.cameraPosition.subtract(target);
     const flat = Math.hypot(offset.x, offset.z);
-    void world.flyTo(target.clone().add(new THREE.Vector3(0, offset.y, flat)), target, 1.2);
+    void world.flyTo(target.add(new Vector3(0, offset.y, flat)), target, 1.2);
   });
 }
 
@@ -151,8 +160,7 @@ function setNumbers(visible: boolean) {
 function presetView(offsetDeg: number, polar: number, distance = 300) {
   // Direção "frente" no mapa: para onde aponta a parte de baixo da implantação (azimute + 180°).
   const bearing = (dev.viewer.layout?.azimuth ?? 0) + 180 + offsetDeg;
-  const center = new THREE.Box3().setFromObject(site.group).getCenter(new THREE.Vector3()).setY(15);
-  void world.frame3(center, distance, polar, 180 - bearing);
+  void world.frame3(siteCenter(15), distance, polar, 180 - bearing);
 }
 
 function setMode(mode: 'day' | 'sunset') {
@@ -190,36 +198,33 @@ function createLabels() {
 }
 
 function bindPicking() {
-  const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2();
   let down: { x: number; y: number } | null = null;
-  const canvas = world.renderer.domElement;
+  const canvas = world.canvas;
   canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
   canvas.addEventListener('pointerup', (e) => {
     if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5 || e.button !== 0) return;
-    const rect = canvas.getBoundingClientRect();
-    pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
-    raycaster.setFromCamera(pointer, world.camera);
-    const targets = site.towers.flatMap((t) => t.pickables.filter((o) => o.visible || !o.userData.unitId));
-    const hit = raycaster.intersectObjects(targets, false).find((h) => h.object.userData.unitId ? h.object.visible : true);
-    if (!hit) return;
-    const { unitId, buildingId } = hit.object.userData as { unitId?: string; buildingId: string };
+    // Com a torre aberta e os apartamentos à mostra, a caixa da torre sai da frente para os volumes serem clicáveis.
+    const targets = new Set<AbstractMesh>(site.towers.flatMap((t) => t.pickables.filter((m, i) => (i === 0 ? !(t === state.tower && unitsShown(t)) : m.isEnabled()))));
+    const hit = world.pick(e, (mesh) => targets.has(mesh));
+    if (!hit?.hit || !hit.pickedMesh) return;
+    const { unitId, buildingId } = hit.pickedMesh.metadata as { unitId?: string; buildingId: string };
     const tower = site.towers.find((t) => t.building.id === buildingId)!;
     if (unitId && state.tower === tower) { const unit = tower.building.units.find((u) => u.id === unitId)!; selectFloor(unit.floor ?? 0, false); selectUnit(unit); }
     else if (state.tower !== tower) selectTower(tower);
   });
 }
+const unitsShown = (tower: TowerObject) => [...tower.unitMeshes.values()].some((m) => m.isEnabled());
 
 function overview(duration = 1.8) {
   const camera = dev.viewer.camera ?? {};
-  const center = new THREE.Box3().setFromObject(site.group).getCenter(new THREE.Vector3()).setY(10);
-  world.controls.target.copy(center);
-  return world.frame3(center, camera.distance ?? 320, camera.polar ?? 58, camera.azimuth ?? 35, duration);
+  return world.frame3(siteCenter(10), camera.distance ?? 320, camera.polar ?? 58, camera.azimuth ?? 35, duration);
 }
 
 function selectTower(tower: TowerObject) {
   if (state.tower && state.tower !== tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); state.tower.setHover(false); }
   tower.setHover(true); // a torre escolhida fica marcada
   state.tower = tower; state.floor = null; state.unit = null;
+  clearUnitLabels();
   hideAmenities();
   towerLabels.forEach((label, id) => label.classList.toggle('on', id === tower.building.id));
   renderTowerBar();
@@ -279,6 +284,7 @@ function renderMirror() {
     const unit = state.tower!.building.units.find((u) => u.id === cell.dataset.unit)!;
     selectFloor(unit.floor ?? 0, false); selectUnit(unit);
   }));
+  $('mirror-panel').querySelector('.row.on')?.scrollIntoView({ block: 'nearest' });
 }
 
 function previewFloor(floor: number | null) {
@@ -289,20 +295,82 @@ function previewFloor(floor: number | null) {
   const element = document.createElement('div'); element.className = 'label floor';
   element.innerHTML = `${floorName(floor)}<small>${available(units)} disponíveis</small>`;
   const h = tower.building.floorHeight ?? 2.9;
-  const position = new THREE.Vector3((tower.building.model3d?.width ?? 30) / 2 + 2, floor * h + h, 0).applyMatrix4(tower.group.matrixWorld);
+  const position = Vector3.TransformCoordinates(new Vector3((tower.building.model3d?.width ?? 30) / 2 + 2, floor * h + h, 0), tower.group.getWorldMatrix());
   floorLabel = { element, remove: world.addLabel(element, position) };
+}
+
+function clearUnitLabels() { for (const label of unitLabels) label.remove(); unitLabels = []; }
+
+/** Número de cada apartamento flutuando sobre o seu volume, na cor do status (o escolhido em destaque). */
+function renderUnitLabels() {
+  clearUnitLabels();
+  const tower = state.tower; if (!tower || state.floor == null) return;
+  for (const unit of tower.building.units.filter((u) => u.floor === state.floor)) {
+    const position = tower.unitTop(unit.id); if (!position) continue;
+    const element = document.createElement('button');
+    element.className = `label unit ${unit.status}${state.unit?.id === unit.id ? ' on' : ''}`;
+    element.textContent = unit.number; element.title = `Apto ${unit.number} · ${statusLabel[unit.status]}`;
+    element.addEventListener('click', () => selectUnit(unit));
+    unitLabels.push({ unitId: unit.id, element, remove: world.addLabel(element, position) });
+  }
 }
 
 function selectFloor(floor: number, fly = true) {
   const tower = state.tower!;
+  const changed = state.floor !== floor;
   state.floor = floor; previewFloor(null); tower.setFloorHighlight(null);
   tower.setUnitsVisible(true, floor);
   renderMirror(); renderCrumbs();
+  if (changed || !unitLabels.length) renderUnitLabels();
   if (fly) {
     const h = tower.building.floorHeight ?? 2.9;
-    const target = new THREE.Vector3(0, floor * h, 0).applyMatrix4(tower.group.matrixWorld);
+    const target = Vector3.TransformCoordinates(new Vector3(0, floor * h, 0), tower.group.getWorldMatrix());
     void world.frame3(target, 110, 50);
   }
+}
+
+/** Área das varandas da planta (cômodos do tipo varanda na planta vetorizada), quando cadastrada. */
+function balconyArea(plan: FloorPlan | undefined) {
+  const rooms = plan?.layout?.rooms.filter((r) => r.kind === 'balcony') ?? [];
+  if (!rooms.length) return null;
+  const polygonArea = (pts: Point[]) => Math.abs(pts.reduce((s, [x1, y1], i) => { const [x2, y2] = pts[(i + 1) % pts.length]; return s + x1 * y2 - x2 * y1; }, 0)) / 2;
+  return rooms.reduce((sum, r) => sum + polygonArea(r.points), 0);
+}
+
+/**
+ * Posição do apartamento na torre: planta de cobertura (lâminas e núcleo, a partir do model3d) com os
+ * apartamentos do andar e o escolhido em laranja, seta do norte real e a pilha de pavimentos ao lado.
+ */
+function positionHtml(tower: TowerObject, unit: Unit) {
+  const b = tower.building; const model = b.model3d ?? { width: 32, depth: 16 };
+  const slots = model.unitSlots?.length ? model.unitSlots : defaultSlots;
+  const columns = Math.max(...slots.map((s) => s.column)) + 1;
+  const W = model.width, D = model.depth; const coreW = Math.min(4.2, W * 0.12);
+  const scale = 150 / Math.max(W, D * 1.6); const w = W * scale, d = D * scale; const pad = 14;
+  const X = (x: number) => pad + (x + W / 2) * scale; const Z = (z: number) => pad + (z + D / 2) * scale;
+  const floorUnits = new Map(b.units.filter((u) => u.floor === unit.floor).map((u) => [u.final ?? '', u] as const));
+  const colW = W / columns;
+  const fill: Record<UnitStatus, string> = { AVAILABLE: 'var(--available)', RESERVED: 'var(--reserved)', SOLD: 'var(--sold)', BLOCKED: 'var(--sold)', UNAVAILABLE: 'var(--sold)' };
+  const cells = slots.map((slot) => {
+    const u = floorUnits.get(slot.final); const x0 = -W / 2 + colW * slot.column; const z0 = slot.side === 'front' ? -D / 2 : 0;
+    const selected = u?.id === unit.id;
+    return `<rect x="${X(x0) + 1}" y="${Z(z0) + 1}" width="${colW * scale - 2}" height="${(D / 2) * scale - 2}" rx="2" fill="${selected ? 'var(--accent)' : u ? fill[u.status] : '#ddd'}" opacity="${selected ? 1 : 0.35}"><title>${esc(u?.number ?? slot.final)}</title></rect>`
+      + (selected ? `<text x="${X(x0 + colW / 2)}" y="${Z(z0 + D / 4) + 4}" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">${esc(unit.number)}</text>` : '');
+  }).join('');
+  // Norte no referencial da torre: desfaz o giro do terreno (azimute) e o da torre.
+  const turn = (((dev.viewer.layout?.azimuth ?? 0) + (b.position?.rotation ?? 0)) * Math.PI) / 180;
+  const nx = -Math.sin(turn), nz = -Math.cos(turn);
+  const cx = pad + w + 22, cz = pad + d / 2;
+  const arrow = `<g transform="translate(${cx} ${cz}) rotate(${(Math.atan2(nx, -nz) * 180) / Math.PI})"><circle r="13" fill="#fff" stroke="var(--line)"/><path d="M0 -10 L4 2 L-4 2 Z" fill="var(--accent)"/><path d="M0 10 L4 2 L-4 2 Z" fill="#c3bdcb"/></g><text x="${cx}" y="${cz - 17}" text-anchor="middle" font-size="9" font-weight="700" fill="var(--muted)">N</text>`;
+  const svgW = pad * 2 + w + 44, svgH = pad * 2 + d;
+  const plan = `<svg viewBox="0 0 ${svgW} ${svgH}" width="${svgW}" height="${svgH}" class="tower-plan" aria-label="Posição do apartamento na planta do andar">
+    <rect x="${X(-W / 2)}" y="${Z(-D / 2)}" width="${w}" height="${d}" rx="3" fill="#f4f1ee" stroke="#cfc9d6"/>
+    ${cells}
+    <rect x="${X(-coreW / 2)}" y="${Z(-D * 0.31)}" width="${coreW * scale}" height="${D * 0.62 * scale}" fill="var(--dark)" opacity="0.75"/>
+    ${arrow}</svg>`;
+  const floors = b.floorCount ?? b.floors.length;
+  const stack = Array.from({ length: floors }, (_, i) => floors - 1 - i).map((f) => `<i class="${f === unit.floor ? 'on' : ''}" title="${floorName(f)}"></i>`).join('');
+  return `<div class="position"><div><small>Posição na torre</small>${plan}</div><div class="stack" aria-label="${floorName(unit.floor ?? 0)} de ${floors} pavimentos">${stack}<small>${unit.floor === 0 ? 'Térreo' : `${unit.floor}º`}</small></div></div>`;
 }
 
 function selectUnit(unit: Unit) {
@@ -310,51 +378,56 @@ function selectUnit(unit: Unit) {
   const tower = state.tower!;
   tower.setSelectedUnit(unit.id);
   renderMirror(); renderCrumbs();
+  for (const label of unitLabels) label.element.classList.toggle('on', label.unitId === unit.id);
   const plan = planOf(unit);
+  const balcony = balconyArea(plan);
+  const showPrice = dev.viewer.layout?.showPrices === true && unit.price != null;
   const panel = $('unit-panel');
-  panel.innerHTML = `<button class="back">‹ ${floorName(unit.floor ?? 0)}</button>
+  panel.innerHTML = `<div class="unit-body"><button class="back">‹ ${floorName(unit.floor ?? 0)}</button>
     <div class="eyebrow">Apartamento</div>
     <div style="display:flex;justify-content:space-between;align-items:center"><h2 class="unit-number">${esc(unit.number)}</h2><span class="tag ${unit.status}">${statusLabel[unit.status]}</span></div>
     <div class="eyebrow">${esc(tower.building.name)}, ${floorName(unit.floor ?? 0)}, final ${esc(unit.final)}</div>
     <div class="facts">
       <div><small>Área privativa</small><b>${area(unit.privateArea)}</b></div>
       <div><small>Planta</small><b>${esc(plan?.name ?? '—')}</b></div>
-      <div><small>Quartos</small><b>${plan?.bedrooms ?? '—'}${plan?.suites ? `, sendo ${plan.suites} suíte` : ''}</b></div>
+      <div><small>Quartos</small><b>${plan?.bedrooms ?? '—'}${plan?.suites ? `, sendo ${plan.suites} suíte${plan.suites > 1 ? 's' : ''}` : ''}</b></div>
       <div><small>Banheiros</small><b>${plan?.bathrooms ?? '—'}</b></div>
-      ${unit.totalArea && unit.totalArea !== unit.privateArea ? `<div><small>Área total (com garden)</small><b>${area(unit.totalArea)}</b></div>` : ''}
       ${plan?.parkingSpaces ? `<div><small>Vagas</small><b>${plan.parkingSpaces}</b></div>` : ''}
+      ${balcony ? `<div><small>Varanda</small><b>${area(balcony)}</b></div>` : ''}
+      ${unit.totalArea && unit.totalArea !== unit.privateArea ? `<div><small>Área total (com garden)</small><b>${area(unit.totalArea)}</b></div>` : ''}
     </div>
-    ${unit.price != null ? `<div class="avail">Valor<br><b style="color:var(--ink);font-size:24px">${money(unit.price)}</b></div>` : ''}
-    <div class="unit-actions">
-      <button class="btn" id="see-plan" ${plan ? '' : 'disabled'}>▦ Ver planta</button>
-      <button class="btn" id="see-view">◉ Ver vista</button>
-      ${plan?.layout ? '<button class="btn" id="see-3d" style="grid-column:1/-1">⬚ Planta 3D mobiliada e passeio</button>' : ''}
-      <button class="btn primary" id="interest" style="grid-column:1/-1">${unit.status === 'AVAILABLE' ? 'Tenho interesse neste apartamento' : 'Quero saber de unidades parecidas'}</button>
+    ${showPrice ? `<div class="avail">Valor<br><b style="color:var(--ink);font-size:24px">${money(unit.price!)}</b></div>` : ''}
+    ${positionHtml(tower, unit)}
+    <button class="btn ghost interest" id="interest">${unit.status === 'AVAILABLE' ? '♡ Tenho interesse neste apartamento' : '♡ Quero saber de unidades parecidas'}</button></div>
+    <div class="unit-footer">
+      <button class="big primary" id="see-3d" ${plan?.layout ? '' : 'disabled title="Planta 3D ainda não cadastrada"'}><span>⬚</span>Ver por dentro</button>
+      <button class="big" id="see-plan" ${plan ? '' : 'disabled'}><span>▦</span>Ver planta</button>
+      <button class="big" id="see-view"><span>◉</span>Ver vista</button>
     </div>`;
   panel.classList.remove('hidden');
   panel.querySelector('.back')!.addEventListener('click', () => back());
   panel.querySelector('#see-plan')!.addEventListener('click', () => plan && showPlan(plan, unit));
   panel.querySelector('#see-view')!.addEventListener('click', () => viewFromUnit(unit));
-  panel.querySelector('#see-3d')?.addEventListener('click', () => plan && openInterior(plan, unit));
+  panel.querySelector('#see-3d')!.addEventListener('click', () => plan && openInterior(plan, unit));
   panel.querySelector('#interest')!.addEventListener('click', () => leadForm(unit));
   const mesh = tower.unitMeshes.get(unit.id)!;
-  const target = mesh.getWorldPosition(new THREE.Vector3());
-  void world.frame3(target, 95, 52);
+  void world.frame3(mesh.getAbsolutePosition().clone(), 95, 52);
 }
 
 /** Câmera na altura e no lado do apartamento, olhando para fora: a vista aproximada da janela. */
 function viewFromUnit(unit: Unit) {
   const tower = state.tower!; const mesh = tower.unitMeshes.get(unit.id)!;
-  const inside = mesh.getWorldPosition(new THREE.Vector3());
-  const outward = new THREE.Vector3(0, 0, Math.sign(mesh.position.z) || 1).applyQuaternion(tower.group.quaternion);
-  const eye = inside.clone().add(outward.clone().multiplyScalar((tower.building.model3d?.depth ?? 16) / 4 + 1.5)).setY(inside.y + 0.4);
-  void world.flyTo(eye, eye.clone().add(outward.multiplyScalar(80)).setY(inside.y - 4), 1.8);
+  const inside = mesh.getAbsolutePosition().clone();
+  const outward = Vector3.TransformNormal(new Vector3(0, 0, Math.sign(mesh.position.z) || 1), tower.group.getWorldMatrix()).normalize();
+  const eye = inside.add(outward.scale((tower.building.model3d?.depth ?? 16) / 4 + 1.5)); eye.y = inside.y + 0.4;
+  const look = eye.add(outward.scale(80)); look.y = inside.y - 4;
+  void world.flyTo(eye, look, 1.8);
 }
 
 function renderCrumbs() {
   const items: [string, () => void][] = [['Visão geral', () => back(true)]];
   if (state.tower) items.push([state.tower.building.name, () => { state.unit = null; state.floor = null; state.tower!.setUnitsVisible(false); $('unit-panel').classList.add('hidden'); selectTower(state.tower!); }]);
-  if (state.tower && state.floor != null) items.push([floorName(state.floor), () => { state.unit = null; state.tower!.setSelectedUnit(null); $('unit-panel').classList.add('hidden'); selectFloor(state.floor!); }]);
+  if (state.tower && state.floor != null) items.push([floorName(state.floor), () => { state.unit = null; state.tower!.setSelectedUnit(null); $('unit-panel').classList.add('hidden'); selectFloor(state.floor!); renderUnitLabels(); }]);
   if (state.unit) items.push([`Apto ${state.unit.number}`, () => selectUnit(state.unit!)]);
   const crumbs = $('crumbs');
   crumbs.classList.toggle('hidden', items.length < 2);
@@ -364,12 +437,13 @@ function renderCrumbs() {
 
 function back(all = false) {
   if (!$('modal').classList.contains('hidden')) { closeModal(); return; }
-  if (!all && state.unit) { state.unit = null; state.tower!.setSelectedUnit(null); $('unit-panel').classList.add('hidden'); renderMirror(); renderCrumbs(); return; }
-  if (!all && state.floor != null) { state.floor = null; state.tower!.setUnitsVisible(true, null); renderMirror(); renderCrumbs(); void world.frame3(state.tower!.center, state.tower!.height * 2.4 + 60, 62); return; }
+  if (!all && state.unit) { state.unit = null; state.tower!.setSelectedUnit(null); $('unit-panel').classList.add('hidden'); renderMirror(); renderCrumbs(); renderUnitLabels(); return; }
+  if (!all && state.floor != null) { state.floor = null; clearUnitLabels(); state.tower!.setUnitsVisible(true, null); renderMirror(); renderCrumbs(); void world.frame3(state.tower!.center, state.tower!.height * 2.4 + 60, 62); return; }
   if (!all && state.tower && !$('mirror-panel').classList.contains('hidden')) { state.tower.setUnitsVisible(false); selectTower(state.tower); return; }
   if (state.tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); state.tower.setHover(false); }
   state.tower = null; state.floor = null; state.unit = null;
   floorLabel?.remove(); floorLabel = null;
+  clearUnitLabels();
   towerLabels.forEach((l) => l.classList.remove('on'));
   for (const id of ['tower-panel', 'mirror-panel', 'unit-panel', 'amenities-panel']) $(id).classList.add('hidden');
   $('hint').classList.remove('hidden');
@@ -388,8 +462,7 @@ function toggleAmenities() {
   panel.classList.remove('hidden'); $('hint').classList.add('hidden');
   panel.querySelector('.close')!.addEventListener('click', () => hideAmenities());
   panel.querySelectorAll<HTMLButtonElement>('[data-id]').forEach((b) => b.addEventListener('click', () => showAmenity(b.dataset.id!)));
-  const center = new THREE.Box3().setFromObject(site.group).getCenter(new THREE.Vector3()).setY(0);
-  void world.frame3(center, 200, 30);
+  void world.frame3(siteCenter(0), 200, 30);
 }
 function hideAmenities() {
   state.amenities = false;
@@ -420,12 +493,13 @@ function showPlan(plan: FloorPlan, unit?: Unit) {
   document.getElementById('plan-3d')?.addEventListener('click', () => { closeModal(); openInterior(plan, unit); });
 }
 
-/** Planta 3D mobiliada em tela cheia (maquete e passeio em primeira pessoa). */
+/** Planta 3D mobiliada em tela cheia (maquete e passeio em primeira pessoa); a maquete pausa enquanto isso. */
 let interior: InteriorViewer | null = null;
 function openInterior(plan: FloorPlan, unit?: Unit) {
   if (!plan.layout || interior) return;
   const subtitle = [unit ? `Apartamento ${unit.number}` : null, area(unit?.privateArea ?? plan.area), plan.bedrooms ? `${plan.bedrooms} quartos` : null].filter(Boolean).join(' · ');
-  interior = new InteriorViewer(plan.layout, { title: plan.name, subtitle, onClose: () => { interior = null; } });
+  world.paused = true;
+  interior = new InteriorViewer(plan.layout, { title: plan.name, subtitle, onClose: () => { interior = null; world.paused = false; } });
 }
 
 function about() {
@@ -490,8 +564,7 @@ async function tour() {
     }
     if (dev.amenities.length) {
       say('Lazer', dev.amenities.map((a) => a.name).slice(0, 6).join(' · ') + (dev.amenities.length > 6 ? '…' : ''));
-      const center = new THREE.Box3().setFromObject(site.group).getCenter(new THREE.Vector3()).setY(0);
-      await world.frame3(center, 170, 35); await wait(2600);
+      await world.frame3(siteCenter(0), 170, 35); await wait(2600);
     }
     say('Escolha seu apartamento', 'Clique numa torre para ver a disponibilidade por andar.');
     await overview(); await wait(2200);
@@ -507,4 +580,4 @@ function updateInset() {
 const panelObserver = new MutationObserver(updateInset);
 for (const id of ['tower-panel', 'mirror-panel', 'unit-panel', 'amenities-panel']) panelObserver.observe($(id), { attributes: true, attributeFilter: ['class'] });
 
-void start().then(() => world?.controls.addEventListener('start', () => { touring = false; }));
+void start();
