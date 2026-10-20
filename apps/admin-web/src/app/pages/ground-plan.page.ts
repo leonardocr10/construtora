@@ -2,7 +2,7 @@ import { DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, OnDestroy, computed, inject, input, signal, viewChild } from '@angular/core';
 import { API_URL, ApiService, VIEWER_URL, errorMessage } from '../core/api.service';
 import { DevelopmentContext } from '../core/development-context';
-import { dominantAngle, maskToLoop, pointInPolygon, polygonArea, segmentDistance, simplifyLoop, snapToVertices, straighten, type Point } from '../core/polygon-tools';
+import { closeMask, dominantAngle, maskToLoop, pointInPolygon, polygonArea, segmentDistance, simplifyLoop, snapToVertices, straighten, type Point } from '../core/polygon-tools';
 import type { Prompt, Segmenter } from '../core/segmenter';
 
 type Kind = 'asphalt' | 'grass' | 'paving' | 'art';
@@ -51,6 +51,7 @@ const labelOf = Object.fromEntries(kinds.map((k) => [k.id, k.label])) as Record<
     .item span.grow{flex:1}
     .item button{border:none;background:none;cursor:pointer;padding:2px 4px;font-size:12px}
     .check{display:flex;gap:6px;align-items:center;font-size:12px;margin:6px 0}
+    @media(max-width:1000px){.gp{grid-template-columns:1fr;height:auto}.pane{height:70vh}}
   `],
   template: `
     <div class="content">
@@ -106,7 +107,12 @@ const labelOf = Object.fromEntries(kinds.map((k) => [k.id, k.label])) as Record<
               }
             </div>
             @if (tool() === 'ai') {
-              <label class="check"><input type="checkbox" [checked]="straight()" (change)="straight.set($any($event.target).checked); refreshPending()"> Endireitar (retas e cantos em esquadro)</label>
+              <label class="check"><input type="checkbox" [checked]="straight()" (change)="straight.set($any($event.target).checked); traceChoice()"> Endireitar (retas e cantos em esquadro)</label>
+              <div class="field"><label>Ignorar detalhes menores que {{ detail() | number: '1.1-1' }} m</label>
+                <input type="range" min="0.2" max="4" step="0.1" [value]="detail()" (change)="detail.set(+$any($event.target).value); traceChoice()" style="width:100%"></div>
+              @if (pending() && candidates().length > 1) {
+                <div class="row"><button class="btn" [disabled]="choice() === 0" (click)="stepChoice(-1)" title="[">− Área menor</button><button class="btn" [disabled]="choice() === candidates().length - 1" (click)="stepChoice(1)" title="]">Área maior +</button></div>
+              }
               @if (pending()?.loop) { <div class="row"><button class="btn blue" (click)="acceptPending()">Adicionar (Enter)</button><button class="btn" (click)="pending.set(null)">Cancelar (Esc)</button></div> }
             }
             <div class="field"><label>Opacidade dos polígonos: {{ opacity() * 100 | number: '1.0-0' }}%</label>
@@ -155,11 +161,16 @@ export class GroundPlanPage implements OnDestroy {
   readonly kind = signal<Kind>('grass');
   readonly opacity = signal(0.55);
   readonly straight = signal(true);
+  /** Detalhe ignorado no contorno da IA (metros): recortes de carro e vaga menores que isso somem. */
+  readonly detail = signal(1.2);
   readonly shapes = signal<Shape[]>([]);
   readonly selected = signal<number | null>(null);
   readonly vertex = signal<number | null>(null);
   readonly draft = signal<Point[]>([]);
   readonly pending = signal<{ prompts: Prompt[]; loop: Point[] | null } | null>(null);
+  /** Candidatas do SAM para os cliques atuais (da menor para a maior) e a escolhida. */
+  readonly candidates = signal<{ mask: Uint8Array; score: number; area: number }[]>([]);
+  readonly choice = signal(0);
   readonly aiStatus = signal<string | null>(null);
   readonly cursor = signal<Point | null>(null);
   readonly space = signal(false);
@@ -254,15 +265,33 @@ export class GroundPlanPage implements OnDestroy {
     const pending = this.pending(); if (!pending?.prompts.length) return;
     await this.analyse(); const crop = this.crop; if (!this.segmenter || !crop) return;
     const run = ++this.aiRun;
-    const local = pending.prompts.map((p) => ({ ...p, x: p.x - crop.x, y: p.y - crop.y }));
-    const mask = await this.segmenter.segment(local);
-    if (run !== this.aiRun || !mask) return;
-    const seed = local.find((p) => p.positive);
-    let loop = maskToLoop(mask, crop.data.width, crop.data.height, seed ? [seed.x, seed.y] : undefined);
+    const candidates = await this.segmenter.segment(pending.prompts.map((p) => ({ ...p, x: p.x - crop.x, y: p.y - crop.y })));
+    if (run !== this.aiRun) return;
+    this.candidates.set(candidates);
+    // A maior área com nota razoável: no chão o clique costuma cair num carro, que o SAM prefere.
+    let pick = candidates.length - 1; while (pick > 0 && candidates[pick].score < 0.55) pick--;
+    this.choice.set(Math.max(0, pick));
+    this.traceChoice();
+  }
+
+  /** Alterna entre as áreas candidatas (−1 menor, +1 maior). */
+  stepChoice(delta: number) {
+    const next = this.choice() + delta; if (next < 0 || next >= this.candidates().length) return;
+    this.choice.set(next); this.traceChoice();
+  }
+
+  /** Contorno da candidata escolhida: fecha recortes, simplifica, endireita e encosta nos vértices vizinhos. */
+  traceChoice() {
+    const pending = this.pending(); const crop = this.crop; const candidate = this.candidates()[this.choice()];
+    if (!pending || !crop || !candidate) { if (pending) this.pending.set({ ...pending, loop: null }); return; }
+    const { width: w, height: h } = crop.data;
+    const seed = pending.prompts.find((p) => p.positive);
+    const closed = closeMask(candidate.mask, w, h, Math.round(this.meters(this.detail())));
+    let loop = maskToLoop(closed, w, h, seed ? [seed.x - crop.x, seed.y - crop.y] : undefined);
     if (!loop) { this.pending.set({ ...pending, loop: null }); return; }
     loop = loop.map(([x, y]) => [x + crop.x, y + crop.y] as Point);
-    loop = simplifyLoop(loop, Math.max(2, this.meters(0.45)));
-    if (this.straight()) loop = straighten(loop, dominantAngle([this.layout()!.lot!]), (14 * Math.PI) / 180, this.meters(0.6));
+    loop = simplifyLoop(loop, Math.max(2, this.meters(Math.max(0.3, this.detail() * 0.4))));
+    if (this.straight()) loop = straighten(loop, dominantAngle([this.layout()!.lot!]), (14 * Math.PI) / 180, this.meters(Math.max(0.6, this.detail())));
     const others = [...(this.layout()?.lot ?? []), ...this.shapes().flatMap((s) => s.points)];
     loop = snapToVertices(loop, others, this.meters(0.4)).map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10] as Point);
     this.pending.set({ prompts: pending.prompts, loop });
@@ -400,6 +429,8 @@ export class GroundPlanPage implements OnDestroy {
       else this.remove(i);
       return;
     }
+    if (k === '[' && this.pending()) { this.stepChoice(-1); return; }
+    if (k === ']' && this.pending()) { this.stepChoice(1); return; }
     if (k === 'a') this.setTool('ai'); else if (k === 'p') this.setTool('polygon'); else if (k === 'e') this.setTool('edit');
     else if (k >= '1' && k <= '4') this.pickKind(kinds[+k - 1].id);
   }

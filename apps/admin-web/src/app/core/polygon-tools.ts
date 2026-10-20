@@ -69,6 +69,31 @@ export function maskToLoop(mask: Uint8Array, w: number, h: number, seed?: Point)
   return best;
 }
 
+/**
+ * Fechamento morfológico (dilata e depois erode, janela quadrada de raio `r`): preenche os recortes que carros,
+ * vagas e copas deixam na borda da máscara, sem engordar a área.
+ */
+export function closeMask(mask: Uint8Array, w: number, h: number, r: number): Uint8Array {
+  if (r < 1) return mask;
+  const pass = (src: Uint8Array, horizontal: boolean, dilate: boolean) => {
+    const out = new Uint8Array(w * h); const lines = horizontal ? h : w; const length = horizontal ? w : h;
+    for (let line = 0; line < lines; line++) {
+      const at = (k: number) => (horizontal ? line * w + k : k * w + line);
+      let count = 0;
+      for (let k = -r; k < length; k++) {
+        if (k + r < length) count += src[at(k + r)];
+        if (k - r - 1 >= 0) count -= src[at(k - r - 1)];
+        if (k < 0) continue;
+        const size = Math.min(length - 1, k + r) - Math.max(0, k - r) + 1;
+        out[at(k)] = dilate ? (count > 0 ? 1 : 0) : (count === size ? 1 : 0);
+      }
+    }
+    return out;
+  };
+  const dilated = pass(pass(mask, true, true), false, true);
+  return pass(pass(dilated, true, false), false, false);
+}
+
 /** Douglas–Peucker num laço fechado. */
 export function simplifyLoop(loop: Point[], eps: number): Point[] {
   if (loop.length < 4) return loop;

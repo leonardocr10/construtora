@@ -34,9 +34,12 @@ export class Segmenter {
     this.width = image.width; this.height = image.height;
   }
 
-  /** Máscara (1 dentro) do tamanho da imagem para os cliques dados; escolhe a de melhor nota entre as três do SAM. */
-  async segment(prompts: Prompt[]): Promise<Uint8Array | null> {
-    if (!this.embeddings || !this.inputs || !prompts.length) return null;
+  /**
+   * As três máscaras do SAM (1 dentro, do tamanho da imagem) para os cliques dados, da menor para a maior área, com
+   * a nota de cada uma. Para chão a área grande costuma ser a certa (o clique cai num carro ou numa vaga).
+   */
+  async segment(prompts: Prompt[]): Promise<{ mask: Uint8Array; score: number; area: number }[]> {
+    if (!this.embeddings || !this.inputs || !prompts.length) return [];
     const { Tensor } = this.lib!;
     const [rh, rw] = this.inputs.reshaped_input_sizes[0];
     const points = prompts.flatMap((p) => [(p.x / this.width) * rw, (p.y / this.height) * rh]);
@@ -45,9 +48,13 @@ export class Segmenter {
     const out = await (this.model as unknown as (inputs: unknown) => Promise<{ pred_masks: unknown; iou_scores: { data: Float32Array } }>)({ ...this.embeddings, input_points, input_labels });
     const masks = await (this.processor as unknown as { post_process_masks: (m: unknown, o: unknown, r: unknown) => Promise<{ data: Uint8Array | boolean[]; dims: number[] }[]> }).post_process_masks(out.pred_masks, this.inputs.original_sizes, this.inputs.reshaped_input_sizes);
     const mask = masks[0]; const scores = Array.from(out.iou_scores.data);
-    const best = scores.indexOf(Math.max(...scores));
-    const [, , h, w] = mask.dims; const size = w * h; const result = new Uint8Array(size);
-    for (let i = 0; i < size; i++) result[i] = mask.data[best * size + i] ? 1 : 0;
-    return result;
+    const [, count, h, w] = mask.dims; const size = w * h;
+    const result: { mask: Uint8Array; score: number; area: number }[] = [];
+    for (let k = 0; k < count; k++) {
+      const m = new Uint8Array(size); let area = 0;
+      for (let i = 0; i < size; i++) if (mask.data[k * size + i]) { m[i] = 1; area++; }
+      if (area) result.push({ mask: m, score: scores[k], area });
+    }
+    return result.sort((a, b) => a.area - b.area);
   }
 }
