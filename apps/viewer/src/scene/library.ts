@@ -23,6 +23,8 @@ export interface InstanceOptions {
   lodDistance: number;
   cull?: number;
   castShadow?: boolean;
+  /** Níveis de detalhe que projetam sombra (padrão: todos). Carros ao longe não precisam. */
+  shadowLevels?: number;
   /** Materiais cuja cor é multiplicada pela cor de cada instância (pintura do carro). */
   tint?: (materialName: string) => boolean;
 }
@@ -130,7 +132,14 @@ export class Library {
             mesh.isPickable = false;
             this.prepareMaterial(mesh);
           }
-          lods[level] = meshes;
+          // Uma malha por material em cada nível (pneus, rodas, faróis… juntos): menos chamadas de desenho por região.
+          const byMaterial = new Map<unknown, Mesh[]>();
+          for (const mesh of meshes) byMaterial.set(mesh.material, [...(byMaterial.get(mesh.material) ?? []), mesh]);
+          lods[level] = [...byMaterial.values()].map((list) => {
+            const merged = list.length === 1 ? list[0] : Mesh.MergeMeshes(list, true, true)!;
+            merged.setEnabled(false); merged.isPickable = false;
+            return merged;
+          });
         }
         for (const node of [...container.transformNodes]) if (!node.getChildMeshes().length) node.dispose();
         return { lods: lods.filter(Boolean) };
@@ -186,7 +195,7 @@ export class Library {
         mesh.thinInstanceSetBuffer('matrix', buffer.slice(), 16, true);
         if (colors && options.tint?.(source.material?.name ?? '')) mesh.thinInstanceSetBuffer('color', colors.slice(), 4, true);
         mesh.thinInstanceRefreshBoundingInfo(false);
-        mesh.metadata = { ...(mesh.metadata ?? {}), castShadow: options.castShadow ?? true };
+        mesh.metadata = { ...(mesh.metadata ?? {}), castShadow: (options.castShadow ?? true) && level < (options.shadowLevels ?? 99) };
         mesh.receiveShadows = true;
         mesh.isPickable = false;
         mesh.alwaysSelectAsActiveMesh = false;

@@ -63,7 +63,8 @@ async function start() {
   hover = bindTowerHover(world, site.towers, () => state.tower);
   bindCompass();
   const inspect: { world: World; site: SiteResult; readyAt?: number } = { world, site };
-  if (import.meta.env.DEV) Object.assign(window, { __vista: inspect }); // inspeção no navegador durante o desenvolvimento
+  // Inspeção no navegador: no desenvolvimento e, em produção, com ?medir (scripts/bench/viewer-bench.mjs).
+  if (import.meta.env.DEV || new URLSearchParams(location.search).has('medir')) Object.assign(window, { __vista: inspect });
   overview(0.01);
 
   $('loading-text').textContent = 'Carregando o entorno real (OpenStreetMap)';
@@ -71,6 +72,8 @@ async function start() {
   try {
     const surroundings = await api.surroundings(slug);
     const result = buildSurroundings(world.scene, surroundings, site.lotWorld);
+    // Entorno é estático: matrizes congeladas (menos trabalho por quadro).
+    for (const mesh of result.group.getChildMeshes()) mesh.freezeWorldMatrix();
     const own = new Set(site.roadAnchors.map((r) => r.name.split(',')[0].toLowerCase()));
     for (const road of result.roadLabels) {
       if ([...own].some((name) => road.name.toLowerCase().includes(name.replace('av. ', 'avenida ')))) continue;

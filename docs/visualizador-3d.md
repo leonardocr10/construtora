@@ -153,6 +153,10 @@ Ao escolher um andar, a torre é cortada acima dele e cada apartamento vira um v
 ### Antes e depois
 
 A maquete do Union Vista em WebGPU reproduz a do Three.js (mesma implantação, torres, lazer, carros, vegetação e entorno), com sombras em cascata mais nítidas perto da câmera e presentes ao longe, oclusão de ambiente e reflexos nos vidros.
+## Modelos do Blender, PBR e HDR
+
+Torres em GLB a partir da fachada do e-book, biblioteca de texturas, céu, vegetação e carros gerada no Blender, câmeras cinematográficas e o comparativo antes/depois com medições estão em [maquete-fotorrealista.md](maquete-fotorrealista.md).
+
 ## Licença dos dados do mapa
 
 Os dados do OpenStreetMap são livres sob a licença ODbL. O crédito "© colaboradores do OpenStreetMap" com link para https://www.openstreetmap.org/copyright precisa ficar visível no visualizador, e já está. As consultas ao Overpass ficam em cache, para respeitar a política de uso do serviço.

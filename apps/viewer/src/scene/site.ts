@@ -224,17 +224,17 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
               // Pequenos desvios dentro da vaga, como no estacionamento de verdade.
               matrix: compose(c.x + jitter(c.seed, 2) * 0.25, lotBase, c.z + jitter(c.seed, 3) * 0.15, 0, -(c.angle + jitter(c.seed, 1) * 0.05), 0),
               color: c.color,
-            })), { parent: group, chunk: 40, lodDistance: 140, cull: 900, tint: (name) => name === 'VH_CarPaint' }));
+            })), { parent: group, chunk: 90, lodDistance: 140, cull: 900, shadowLevels: 1, tint: (name) => name === 'VH_CarPaint' }));
           });
           const random = seededRandom(17);
           if (trees.length) tasks.push(library.instances('tree_broadleaf', place(trees).map(([x, z, size]) => {
             const s = (size * 1.7) / 6.6 * (0.9 + random() * 0.25);
             return { matrix: compose(x, asphaltLevel + curbHeight, z, 0, random() * Math.PI * 2, 0, s, s * (0.9 + random() * 0.2), s) };
-          }), { parent: group, chunk: 60, lodDistance: 170, cull: 1600 }));
+          }), { parent: group, chunk: 120, lodDistance: 170, cull: 1600 }));
           if (palms.length) tasks.push(library.instances('tree_palm', palms.map(([x, z]) => {
             const s = (8.5 + random() * 2.5) / 9;
             return { matrix: compose(x, asphaltLevel + curbHeight, z, 0, random() * Math.PI * 2, 0, s, s, s) };
-          }), { parent: group, chunk: 60, lodDistance: 170, cull: 1600 }));
+          }), { parent: group, chunk: 120, lodDistance: 170, cull: 1600 }));
           readyTasks.push(Promise.all(tasks).catch((error) => console.warn('Modelos da biblioteca indisponíveis', error)));
         } else {
           buildCars(scene, group, cars);

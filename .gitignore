@@ -9,3 +9,6 @@ storage/*
 !storage/.gitkeep
 *.tsbuildinfo
 .claude/
+
+# Saída do comparativo da maquete (scripts/bench/viewer-bench.mjs)
+bench-out/

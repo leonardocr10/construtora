@@ -213,6 +213,8 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
     const visual = root.getChildMeshes(false).filter((m): m is Mesh => m instanceof Mesh && !m.isDisposed() && m.getTotalVertices() > 0);
     for (const mesh of visual) {
       shadows(mesh, true); mesh.isPickable = false;
+      // Caixilhos, guarda-corpos e juntas somem ao longe (são finos demais para aparecer e custam muitos triângulos).
+      if (/-(frames|rails|joints)/.test(mesh.name)) mesh.addLODLevel(420 * (library?.lodScale ?? 1), null);
       const material = mesh.material as PBRMaterial | null; if (!material) continue;
       material.maxSimultaneousLights = 4;
       if (material.name === 'VH_GlassLit') { material.emissiveColor = rgb(0xffc56a); material.emissiveIntensity = dusk * 1.6; if (!litMaterials.includes(material)) litMaterials.push(material); }
