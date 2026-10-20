@@ -50,6 +50,10 @@ enum RegionKind {
   ENTRANCE
   PARKING
   POI
+  /// Lote de loteamento desenhado sobre a implantação (polígono em pixels).
+  LOT
+  /// Malha/nó de um modelo GLB importado vinculado a uma unidade.
+  UNIT
 }
 
 enum JobKind {
@@ -338,6 +342,7 @@ model Unit {
   statusHistory SalesStatusHistory[]
   leads         Lead[]
   assets        DevelopmentAsset[]
+  regionLinks   RegionLink[]
 
   @@unique([buildingId, number])
   @@index([buildingId, status])
@@ -399,6 +404,7 @@ model AmenityMedia {
   @@index([amenityId])
 }
 
+/// Camada clicável sobre uma mídia: a implantação (lotes em pixels) ou um modelo GLB (nós vinculados a unidades).
 model InteractiveMap {
   id            String              @id @default(cuid())
   developmentId String
@@ -410,6 +416,8 @@ model InteractiveMap {
   development   Development         @relation(fields: [developmentId], references: [id], onDelete: Restrict)
   asset         DevelopmentAsset    @relation("InteractiveMapAsset", fields: [assetId], references: [id], onDelete: Restrict)
   regions       InteractiveRegion[]
+
+  @@index([developmentId, assetId])
 }
 
 model InteractiveRegion {
@@ -417,6 +425,7 @@ model InteractiveRegion {
   mapId     String
   name      String
   kind      RegionKind
+  /// LOT: { points: [[x, y], ...] } em pixels da implantação. UNIT: { node: "nome do nó no GLB" }.
   geometry  Json
   sortOrder Int            @default(0)
   map       InteractiveMap @relation(fields: [mapId], references: [id], onDelete: Restrict)
@@ -430,12 +439,16 @@ model RegionLink {
   regionId   String
   buildingId String?
   amenityId  String?
+  unitId     String?
   region     InteractiveRegion @relation(fields: [regionId], references: [id], onDelete: Restrict)
   building   Building?         @relation(fields: [buildingId], references: [id], onDelete: Restrict)
   amenity    Amenity?          @relation(fields: [amenityId], references: [id], onDelete: Restrict)
+  unit       Unit?             @relation(fields: [unitId], references: [id], onDelete: Restrict)
 
   @@unique([regionId, buildingId])
   @@unique([regionId, amenityId])
+  @@unique([regionId, unitId])
+  @@index([unitId])
 }
 
 model ModelVersion {

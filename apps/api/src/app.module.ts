@@ -7,8 +7,9 @@ import { PrismaModule } from './common/prisma.module';
 import { DevelopmentsModule } from './developments/developments.module';
 import { StructureModule } from './structure/structure.module';
 import { PublicModule } from './public/public.module';
+import { ImplantationModule } from './implantation/implantation.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]), PrismaModule, AuthModule, DashboardModule, DevelopmentsModule, StructureModule, PublicModule],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]), PrismaModule, AuthModule, DashboardModule, DevelopmentsModule, StructureModule, PublicModule, ImplantationModule],
 })
 export class AppModule {}
