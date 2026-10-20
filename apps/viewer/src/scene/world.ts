@@ -10,7 +10,19 @@ import { detectQuality, qualityLevels, savedQuality, saveQuality, type QualityLe
 
 export type LightMode = 'day' | 'sunset';
 
-interface Flight { fromPos: Vector3; fromTarget: Vector3; toPos: Vector3; toTarget: Vector3; start: number; duration: number; resolve: () => void }
+/** Voo da câmera: posição e alvo em função do progresso 0–1 (já suavizado). */
+interface Flight { at: (e: number) => { position: Vector3; target: Vector3 }; start: number; duration: number; resolve: () => void; ease: (t: number) => number }
+/** Ponto-chave de um trajeto cinematográfico. */
+export interface CameraKey { position: Vector3; target: Vector3 }
+
+/** Catmull-Rom centrípeta simplificada (uniforme) entre p1 e p2. */
+function catmull(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: number) {
+  const t2 = t * t, t3 = t2 * t;
+  return p1.scale(2).add(p2.subtract(p0).scale(t)).add(p0.scale(2).subtract(p1.scale(5)).add(p2.scale(4)).subtract(p3).scale(t2)).add(p1.scale(3).subtract(p0).subtract(p2.scale(3)).add(p3).scale(t3)).scale(0.5);
+}
+const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+/** Começa e termina devagar, com velocidade quase constante no meio (bom para trajetos longos). */
+const easeCruise = (t: number) => { const a = 0.18; if (t < a) return (t * t) / (2 * a * (1 - a)); if (t > 1 - a) return 1 - ((1 - t) * (1 - t)) / (2 * a * (1 - a)); return (t - a / 2) / (1 - a); };
 interface Label { element: HTMLElement; position: Vector3; minDistance?: number; maxDistance?: number }
 
 interface Palette { top: Color3; bottom: Color3; fog: Color3; sun: Color3; hemiSky: Color3; hemiGround: Color3; sunIntensity: number; hemiIntensity: number; elevation: number; azimuth: number; exposure: number; fogNear: number; fogFar: number }
@@ -87,7 +99,7 @@ export class World {
     camera.setPosition(new Vector3(260, 220, 300));
     camera.attachControl(false, false, 2);
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-    for (const type of ['pointerdown', 'wheel'] as const) canvas.addEventListener(type, () => { for (const fn of this.interactListeners) fn(); }, { passive: true });
+    for (const type of ['pointerdown', 'wheel'] as const) canvas.addEventListener(type, () => { this.stopFlight(); for (const fn of this.interactListeners) fn(); }, { passive: true });
     camera.onProjectionMatrixChangedObservable.add(() => this.applyInset());
 
     this.sun = new DirectionalLight('sun', new Vector3(-0.3, -1, 0.4), scene);
@@ -270,16 +282,45 @@ export class World {
     return () => { element.remove(); this.labels.splice(this.labels.indexOf(label), 1); };
   }
 
-  /** Voa a câmera até uma posição/alvo com aceleração suave. */
+  /**
+   * Voa a câmera até uma posição/alvo com aceleração suave. Em deslocamentos longos a trajetória sobe em arco
+   * (curva de Bézier com o ponto do meio elevado), como um drone, em vez de atravessar prédios em linha reta.
+   */
   flyTo(position: Vector3, target: Vector3, duration = 1.6) {
+    const camera = this.camera;
+    const from = camera.position.clone(), fromTarget = camera.target.clone(); const to = position.clone(), toTarget = target.clone();
+    const span = Vector3.Distance(from, to);
+    const mid = Vector3.Center(from, to); mid.y = Math.max(from.y, to.y) + (span > 60 ? span * 0.22 : 0);
+    return this.fly((e) => {
+      const a = Vector3.Lerp(from, mid, e), b = Vector3.Lerp(mid, to, e);
+      return { position: Vector3.Lerp(a, b, e), target: Vector3.Lerp(fromTarget, toTarget, e) };
+    }, duration, easeInOut);
+  }
+
+  /**
+   * Trajeto cinematográfico: passa suavemente por todos os pontos (spline Catmull-Rom na posição e no alvo),
+   * com velocidade de cruzeiro. Parte de onde a câmera está. Qualquer arrasto ou roda interrompe.
+   */
+  flyPath(keys: CameraKey[], duration: number) {
+    const points = [{ position: this.camera.position.clone(), target: this.camera.target.clone() }, ...keys];
+    const at = (e: number) => {
+      const n = points.length - 1; const s = Math.min(n - 1e-6, e * n); const i = Math.floor(s); const t = s - i;
+      const p = (k: number) => points[Math.max(0, Math.min(n, k))];
+      return { position: catmull(p(i - 1).position, p(i).position, p(i + 1).position, p(i + 2).position, t), target: catmull(p(i - 1).target, p(i).target, p(i + 1).target, p(i + 2).target, t) };
+    };
+    return this.fly(at, duration, easeCruise);
+  }
+
+  private fly(at: Flight['at'], duration: number, ease: (t: number) => number) {
     this.flight?.resolve();
     const camera = this.camera;
     camera.inertialAlphaOffset = camera.inertialBetaOffset = camera.inertialRadiusOffset = 0;
     camera.inertialPanningX = camera.inertialPanningY = 0;
-    return new Promise<void>((resolve) => {
-      this.flight = { fromPos: camera.position.clone(), fromTarget: camera.target.clone(), toPos: position.clone(), toTarget: target.clone(), start: performance.now(), duration: duration * 1000, resolve };
-    });
+    return new Promise<void>((resolve) => { this.flight = { at, start: performance.now(), duration: duration * 1000, resolve, ease }; });
   }
+
+  /** Interrompe o voo em andamento (o visitante assumiu a câmera). */
+  stopFlight() { const f = this.flight; this.flight = null; f?.resolve(); }
 
   /** Enquadra um ponto a uma distância, mantendo a direção horizontal atual (ou um azimute dado). */
   frame3(target: Vector3, distance: number, polarDeg = 58, azimuthDeg?: number, duration = 1.6) {
@@ -323,9 +364,9 @@ export class World {
     if (this.flight) {
       const f = this.flight;
       const t = Math.min((now - f.start) / f.duration, 1);
-      const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-      this.camera.setTarget(Vector3.Lerp(f.fromTarget, f.toTarget, e));
-      this.camera.setPosition(Vector3.Lerp(f.fromPos, f.toPos, e));
+      const { position, target } = f.at(f.ease(t));
+      this.camera.setTarget(target);
+      this.camera.setPosition(position);
       if (t >= 1) { this.flight = null; f.resolve(); }
     }
     if (this.dusk !== this.duskTarget) {

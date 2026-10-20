@@ -1,7 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { ApiService, Building, FloorPlan, errorMessage } from '../core/api.service';
+import { ApiService, Building, Facade3D, FloorPlan, errorMessage } from '../core/api.service';
 import { DevelopmentContext } from '../core/development-context';
 import { initials, val } from '../core/labels';
 
@@ -18,6 +18,7 @@ interface GlbResult { asset: { id: string; byteSize: string }; modelVersion: { i
 
 @Component({
   imports: [RouterLink, DatePipe], changeDetection: ChangeDetectionStrategy.OnPush,
+  styles: ['.badge{padding:2px 8px;border-radius:20px;font-weight:700;font-size:10px;margin-left:4px}.badge.warn{background:#fff1cd;color:#936407}'],
   template: `
     <div class="content">
       <div class="head"><div><h1>Torres e pavimentos</h1><p class="sub">Estruture blocos, pavimentos e regras de numeração para cada torre.</p></div></div>
@@ -79,10 +80,23 @@ interface GlbResult { asset: { id: string; byteSize: string }; modelVersion: { i
             <div class="field"><label>Rotação (graus)</label><input class="input" type="number" step="1" [value]="m3().rotation" (input)="set3('rotation', $event)"></div>
             <div class="field"><label>Cores (fachada / destaque)</label><div style="display:flex;gap:8px"><input class="input" type="color" [value]="m3().facade" (input)="set3('facade', $event)"><input class="input" type="color" [value]="m3().accent" (input)="set3('accent', $event)"></div></div>
           </div>
+          <h4 style="margin:18px 0 4px">Fachada do modelo detalhado</h4>
+          <p class="small" style="margin:0 0 8px">Medidas e cores usadas pelo gerador do Blender. As marcadas como <span class="badge warn">estimado</span> não constam no material do cliente; ao corrigir um valor, ele deixa de ser estimado.@if (b.model3d?.facade?.source) { <br>Fonte: {{ b.model3d?.facade?.source }} }</p>
+          <div class="grid g4">
+            @for (f of facadeFields; track f.key) {
+              <div class="field"><label>{{ f.label }} @if (isEstimated(f.estimate)) { <span class="badge warn">estimado</span> }</label>
+                @if (f.kind === 'color') { <input class="input" type="color" [value]="fac()[f.key]" (input)="setFac(f.key, f.estimate, $event)"> }
+                @else if (f.kind === 'bool') { <select class="input" [value]="fac()[f.key] ? '1' : '0'" (change)="setFac(f.key, f.estimate, $event)"><option value="1">Sim</option><option value="0">Não</option></select> }
+                @else { <input class="input" type="number" step="0.05" [value]="fac()[f.key]" (input)="setFac(f.key, f.estimate, $event)"> }
+              </div>
+            }
+          </div>
           <div class="filebox" style="margin-top:14px;align-items:center">
             <div style="flex:1">
               <b>Modelo GLB detalhado</b>
-              <p class="small" style="margin:2px 0 0">Gera no Blender local (gratuito) uma maquete com painéis, janelas recuadas, peitoris, frisos e núcleo, usando os parâmetros salvos acima, e registra uma nova versão do modelo 3D. Salve os parâmetros antes de gerar.</p>
+              <p class="small" style="margin:2px 0 0">Gera no Blender local (gratuito) a torre com painéis, janelas com vão e caixilho, varandas com guarda-corpo, juntas e cobertura, usando os parâmetros salvos acima, e registra uma nova versão do modelo 3D. Salve os parâmetros antes de gerar.</p>
+              <p class="small" style="margin:4px 0 0">@if (b.model3d?.glb; as g) { No visualizador: <b>modelo detalhado v{{ g.version ?? '?' }}</b> · <a href="" (click)="useParametric($event, b)">voltar ao paramétrico</a> } @else { No visualizador: modelo paramétrico (desenhado no navegador). }</p>
+              <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" [checked]="glbActivate()" (change)="glbActivate.set(!glbActivate())"> Usar no visualizador ao gerar</label>
             </div>
             <button class="btn soft" type="button" [disabled]="glbBusy() || busy()" (click)="generateGlb(b)">{{ glbBusy() ? 'Gerando no Blender… ' + glbElapsed() + ' s' : 'Gerar modelo 3D (Blender)' }}</button>
           </div>
@@ -141,6 +155,26 @@ export class BuildingsPage {
   readonly glbError = signal<string | null>(null);
   readonly glbResult = signal<GlbResult | null>(null);
   readonly glbJobs = signal<GlbJob[]>([]);
+  readonly glbActivate = signal(true);
+
+  /** Campos da fachada; `estimate` é o nome usado em facade.estimated (o selo some quando o valor é corrigido). */
+  readonly facadeFields: { key: FacadeKey; label: string; kind: 'color' | 'number' | 'bool'; estimate: string }[] = [
+    { key: 'tone0', label: 'Tom das pontas', kind: 'color', estimate: 'tones' }, { key: 'tone1', label: 'Tom junto ao núcleo', kind: 'color', estimate: 'tones' },
+    { key: 'frame', label: 'Caixilho', kind: 'color', estimate: 'frame' }, { key: 'railing', label: 'Guarda-corpo', kind: 'color', estimate: 'railing' },
+    { key: 'winW', label: 'Janela: largura (m)', kind: 'number', estimate: 'window' }, { key: 'winH', label: 'Janela: altura (m)', kind: 'number', estimate: 'window' },
+    { key: 'sill', label: 'Janela: peitoril (m)', kind: 'number', estimate: 'window' }, { key: 'small', label: 'Janela do banheiro (m)', kind: 'number', estimate: 'smallWindow' },
+    { key: 'balEnabled', label: 'Varandas em balanço', kind: 'bool', estimate: 'balconies.enabled' }, { key: 'balWidth', label: 'Varanda: largura (m)', kind: 'number', estimate: 'balconies.width' },
+    { key: 'balProjection', label: 'Varanda: balanço (m)', kind: 'number', estimate: 'balconies.projection' }, { key: 'balFrom', label: 'Varandas a partir do pavimento', kind: 'number', estimate: 'balconies.fromFloor' },
+  ];
+  readonly fac = signal<Record<FacadeKey, string | number | boolean>>(facadeValues(undefined));
+  readonly estimated = signal<string[]>([]);
+  isEstimated(key: string) { return this.estimated().includes(key); }
+  setFac(key: FacadeKey, estimate: string, event: Event) {
+    const raw = val(event);
+    const field = this.facadeFields.find((f) => f.key === key)!;
+    this.fac.update((f) => ({ ...f, [key]: field.kind === 'color' ? raw : field.kind === 'bool' ? raw === '1' : Number(raw) }));
+    this.estimated.update((list) => list.filter((k) => k !== estimate));
+  }
   private glbJobsFor = '';
 
   ngOnInit() { this.ctx.select(this.id()); void this.load(); }
@@ -158,9 +192,15 @@ export class BuildingsPage {
     this.glbBusy.set(true); this.glbError.set(null); this.glbResult.set(null); this.glbElapsed.set(0);
     const started = Date.now();
     const timer = setInterval(() => this.glbElapsed.set(Math.round((Date.now() - started) / 1000)), 1000);
-    try { this.glbResult.set(await this.api.post<GlbResult>(`/buildings/${b.id}/model/generate`, {})); }
+    try { this.glbResult.set(await this.api.post<GlbResult>(`/buildings/${b.id}/model/generate`, { activate: this.glbActivate() })); if (this.glbActivate()) await this.load(); }
     catch (error) { this.glbError.set(errorMessage(error)); }
     finally { clearInterval(timer); this.glbBusy.set(false); void this.loadGlbJobs(b); }
+  }
+
+  /** Volta a torre ao modelo paramétrico no visualizador (o GLB continua nas versões do modelo 3D). */
+  useParametric(event: Event, b: Building) {
+    event.preventDefault();
+    void this.run(async () => { await this.api.put(`/buildings/${b.id}/model/viewer`, { assetId: null }); return `O visualizador volta a desenhar ${b.name} no navegador.`; });
   }
 
   setPlan(final: string, planId: string) { this.planByFinal.update((m) => { const next = { ...m }; if (planId) next[final] = planId; else delete next[final]; return next; }); }
@@ -169,6 +209,7 @@ export class BuildingsPage {
   fill3d(b: Building | null) {
     if (!b) return;
     if (this.glbJobsFor !== b.id) { this.glbResult.set(null); this.glbError.set(null); this.glbJobs.set([]); void this.loadGlbJobs(b); }
+    this.fac.set(facadeValues(b.model3d?.facade)); this.estimated.set([...(b.model3d?.facade?.estimated ?? [])]);
     this.m3.set({ floorHeight: Number(b.floorHeight ?? 2.9), width: b.model3d?.width ?? 30, depth: b.model3d?.depth ?? 16, elevators: b.model3d?.elevators ?? 2, x: b.position?.x ?? 0, z: b.position?.z ?? 0, rotation: b.position?.rotation ?? 0, facade: b.model3d?.colors?.facade ?? '#eceeea', accent: b.model3d?.colors?.accent ?? '#e0622a' });
   }
 
@@ -176,7 +217,7 @@ export class BuildingsPage {
     event.preventDefault();
     const m = this.m3();
     void this.run(async () => {
-      await this.api.patch(`/buildings/${b.id}`, { floorHeight: m.floorHeight, position: { x: m.x, z: m.z, rotation: m.rotation }, model3d: { ...(b.model3d ?? {}), width: m.width, depth: m.depth, elevators: m.elevators, colors: { ...(b.model3d?.colors ?? {}), facade: m.facade, accent: m.accent } } });
+      await this.api.patch(`/buildings/${b.id}`, { floorHeight: m.floorHeight, position: { x: m.x, z: m.z, rotation: m.rotation }, model3d: { ...(b.model3d ?? {}), width: m.width, depth: m.depth, elevators: m.elevators, colors: { ...(b.model3d?.colors ?? {}), facade: m.facade, accent: m.accent }, facade: facadeFrom(b.model3d?.facade, this.fac(), this.estimated()) } });
       return `Parâmetros 3D de ${b.name} salvos.`;
     });
   }
@@ -223,4 +264,27 @@ export class BuildingsPage {
       return `${r.created} unidades e ${r.floorsCreated} pavimentos criados em ${building.name}.`;
     });
   }
+}
+
+
+type FacadeKey = 'tone0' | 'tone1' | 'frame' | 'railing' | 'winW' | 'winH' | 'sill' | 'small' | 'balEnabled' | 'balWidth' | 'balProjection' | 'balFrom';
+
+/** Valores da fachada para o formulário (padrões iguais aos do gerador). */
+function facadeValues(f: Facade3D | undefined): Record<FacadeKey, string | number | boolean> {
+  return {
+    tone0: f?.tones?.[0] ?? '#e6ebe8', tone1: f?.tones?.[1] ?? '#eef0ee', frame: f?.frame ?? '#eceeee', railing: f?.railing ?? '#2e3236',
+    winW: f?.window?.width ?? 1.2, winH: f?.window?.height ?? 1.0, sill: f?.window?.sill ?? 1.05, small: f?.smallWindow ?? 0.6,
+    balEnabled: f?.balconies?.enabled ?? true, balWidth: f?.balconies?.width ?? 2.3, balProjection: f?.balconies?.projection ?? 1.2, balFrom: f?.balconies?.fromFloor ?? 1,
+  };
+}
+
+/** Junta o formulário ao que já existe em model3d.facade (mantém fonte, vidro, juntas e o que o painel não mostra). */
+function facadeFrom(current: Facade3D | undefined, v: Record<FacadeKey, string | number | boolean>, estimated: string[]): Facade3D {
+  return {
+    ...(current ?? {}),
+    tones: [String(v['tone0']), String(v['tone1'])], frame: String(v['frame']), railing: String(v['railing']),
+    window: { ...(current?.window ?? {}), width: Number(v['winW']), height: Number(v['winH']), sill: Number(v['sill']) }, smallWindow: Number(v['small']),
+    balconies: { ...(current?.balconies ?? {}), enabled: Boolean(v['balEnabled']), width: Number(v['balWidth']), projection: Number(v['balProjection']), fromFloor: Number(v['balFrom']) },
+    estimated,
+  };
 }

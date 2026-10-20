@@ -20,7 +20,17 @@ export interface Development {
   _count?: { buildings: number; assets?: number };
 }
 export interface Floor { id: string; buildingId: string; name: string; number: number; sortOrder: number; }
-export interface Building3D { width?: number; depth?: number; elevators?: number; colors?: { facade?: string; accent?: string; roof?: string }; unitSlots?: { final: string; side: 'front' | 'back'; column: number }[] }
+/** Fachada do gerador do Blender (scripts/blender/build_tower.py): `estimated` lista o que não veio do material do cliente. */
+export interface Facade3D {
+  tones?: string[]; frame?: string; glass?: string; railing?: string;
+  window?: { width?: number; height?: number; sill?: number }; smallWindow?: number;
+  balconies?: { enabled?: boolean; width?: number; projection?: number; fromFloor?: number; railHeight?: number };
+  floorJoints?: boolean; estimated?: string[]; source?: string | null;
+}
+export interface Building3D {
+  width?: number; depth?: number; elevators?: number; colors?: { facade?: string; accent?: string; roof?: string }; unitSlots?: { final: string; side: 'front' | 'back'; column: number }[];
+  facade?: Facade3D; glb?: { assetId: string; version?: number | null; generatedAt?: string } | null;
+}
 export interface Building {
   id: string; developmentId: string; name: string; code: string; sortOrder: number; floors: Floor[]; _count: { units: number };
   floorCount: number | null; unitsPerFloor: number | null; floorHeight: string | number | null;

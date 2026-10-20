@@ -114,6 +114,10 @@ function renderViews() {
     ['▯', 'Lateral', () => presetView(90, 72)],
     ['▢', 'Fundos', () => presetView(180, 72)],
     ['⊡', 'Topo', () => presetView(0, 2, 420)],
+    // Trajetos cinematográficos (spline suave, velocidade de cruzeiro); arrastar ou rolar interrompe.
+    ['◎', 'Voo 360°', () => void cinematic('orbit')],
+    ['➚', 'Chegada', () => void cinematic('arrival')],
+    ['⤳', 'Sobrevoo', () => void cinematic('flyover')],
   ];
   const el = $('views');
   el.classList.toggle('collapsed', viewsCollapsed);
@@ -165,6 +169,40 @@ function setNumbers(visible: boolean) {
   for (const label of amenityLabels) label.classList.toggle('hidden-num', !visible);
   const button = document.getElementById('numbers');
   if (button) { button.classList.toggle('off', !visible); button.querySelector('.t')!.textContent = visible ? 'Ocultar números' : 'Mostrar números'; }
+}
+
+/** Ponto a distance m do centro do conjunto, na direção offsetDeg a partir da frente da implantação, na altura y. */
+function around(offsetDeg: number, distance: number, y: number) {
+  const bearing = (dev.viewer.layout?.azimuth ?? 0) + 180 + offsetDeg;
+  const az = ((180 - bearing) * Math.PI) / 180; const c = siteCenter(0);
+  return new Vector3(c.x + Math.sin(az) * distance, y, c.z + Math.cos(az) * distance);
+}
+
+/**
+ * Câmeras cinematográficas: volta completa em volta do conjunto, chegada rasante pela frente subindo até a
+ * vista aérea, e sobrevoo dos fundos para a frente passando por cima das torres.
+ */
+async function cinematic(kind: 'orbit' | 'arrival' | 'flyover') {
+  touring = false; back(true);
+  const center = siteCenter(14);
+  if (kind === 'orbit') {
+    const keys = Array.from({ length: 13 }, (_, i) => ({ position: around(i * 30 - 20, 230 + 30 * Math.sin(i * 0.9), 95 + 25 * Math.cos(i * 0.7)), target: center }));
+    await world.flyPath(keys, 28);
+  } else if (kind === 'arrival') {
+    await world.flyPath([
+      { position: around(-8, 430, 15), target: siteCenter(18) },
+      { position: around(-3, 260, 16), target: siteCenter(20) },
+      { position: around(4, 150, 38), target: siteCenter(16) },
+      { position: around(14, 210, 120), target: siteCenter(8) },
+    ], 15);
+  } else {
+    await world.flyPath([
+      { position: around(180, 280, 150), target: center },
+      { position: around(170, 90, 115), target: around(0, 40, 10) },
+      { position: around(10, 60, 95), target: around(0, 200, 0) },
+      { position: around(25, 260, 70), target: center },
+    ], 16);
+  }
 }
 
 function presetView(offsetDeg: number, polar: number, distance = 300) {
