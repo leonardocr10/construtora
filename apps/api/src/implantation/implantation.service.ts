@@ -93,6 +93,9 @@ export class ImplantationService {
         if (!finite(l.imageWidth, l.imageHeight, l.metersPerPixel, l.azimuth, ...(l.origin ?? [])) || l.imageWidth < 1 || l.imageHeight < 1 || l.metersPerPixel <= 0 || l.origin?.length !== 2) throw new BadRequestException('Calibração da implantação inválida');
         if (l.siteImageAssetId && !(await db.developmentAsset.findFirst({ where: { id: l.siteImageAssetId, developmentId, mimeType: { startsWith: 'image/' } } }))) throw new BadRequestException('Imagem da implantação não pertence ao empreendimento');
         if (l.lot) this.assertPolygon(l.lot, l, 'Contorno do terreno');
+        // Ajuste manual de escala/azimute/origem invalida o resumo da calibração por pontos.
+        const manual = current.metersPerPixel !== l.metersPerPixel || current.azimuth !== ((l.azimuth % 360) + 360) % 360 || JSON.stringify(current.origin) !== JSON.stringify([round(l.origin[0], 1), round(l.origin[1], 1)]);
+        if (manual && current.calibration) current.calibration = { status: 'manual', note: 'Escala, azimute ou origem alterados à mão depois da calibração por pontos' };
         layout = { ...current, ...l, azimuth: ((l.azimuth % 360) + 360) % 360, origin: [round(l.origin[0], 1), round(l.origin[1], 1)], lot: l.lot?.map(([x, y]) => [Math.round(x), Math.round(y)] as Point) ?? current.lot };
         const config = await db.viewerConfiguration.upsert({ where: { developmentId }, update: { publicLayout: layout as Prisma.InputJsonValue }, create: { developmentId, publicLayout: layout as Prisma.InputJsonValue } });
         const pick = (v: Partial<LayoutInput>) => ({ siteImageAssetId: v.siteImageAssetId ?? null, metersPerPixel: v.metersPerPixel ?? null, azimuth: v.azimuth ?? null, origin: v.origin ?? null, lotPoints: v.lot?.length ?? 0 });

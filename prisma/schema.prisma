@@ -202,6 +202,7 @@ model Development {
   publications        Publication[]
   viewEvents          ViewEvent[]
   viewerConfiguration ViewerConfiguration?
+  controlPoints       LayoutControlPoint[]
   threeDGenerations   ThreeDGeneration[]
 
   @@index([organizationId, status])
@@ -672,6 +673,32 @@ model AuditLog {
   @@index([organizationId, entityType, entityId])
   @@index([organizationId, createdAt])
   @@index([userId])
+}
+
+/// Ponto de controle da calibração: liga um pixel da arte da implantação a uma coordenada geográfica verificada.
+model LayoutControlPoint {
+  id            String             @id @default(cuid())
+  developmentId String
+  label         String             @db.VarChar(120)
+  pixelX        Decimal            @db.Decimal(10, 2)
+  pixelY        Decimal            @db.Decimal(10, 2)
+  latitude      Decimal            @db.Decimal(10, 7)
+  longitude     Decimal            @db.Decimal(10, 7)
+  /// Origem da coordenada: OSM (feição do OpenStreetMap), SURVEY (levantamento topográfico), GPS ou MANUAL.
+  source        ControlPointSource @default(OSM)
+  note          String?            @db.VarChar(255)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  development   Development        @relation(fields: [developmentId], references: [id], onDelete: Restrict)
+
+  @@index([developmentId])
+}
+
+enum ControlPointSource {
+  OSM
+  SURVEY
+  GPS
+  MANUAL
 }
 
 model ViewerConfiguration {

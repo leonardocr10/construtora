@@ -61,6 +61,7 @@ export class AppComponent {
     { icon: '▦', label: 'Espelho de vendas', path: 'espelho' },
     { icon: '▧', label: 'Plantas e tipologias', path: 'plantas' },
     { icon: '⌖', label: 'Implantação', path: 'implantacao' },
+    { icon: '◎', label: 'Calibrar implantação', path: 'calibrar' },
     { icon: '⬡', label: 'Estúdio 3D', path: 'estudio-3d' },
   ];
 
