@@ -55,6 +55,8 @@ async function start() {
   const towerModels = new Map(dev.buildings.filter((b) => b.model3d?.glb?.assetId).map((b) => [b.id, api.assetUrl(b.model3d!.glb!.assetId)] as const));
   site = buildSite(world.scene, dev, siteImage, library, towerModels);
   world.onDusk((t) => { for (const tower of site.towers) tower.setDusk(t); });
+  // A câmera não entra nas torres: a aproximação para na fachada (na janela).
+  for (const tower of site.towers) world.addObstacle(tower.group, () => tower.solids());
   world.onInteract(() => { touring = false; });
 
   renderChrome();
@@ -275,6 +277,7 @@ function selectTower(tower: TowerObject) {
   hover?.clear();
   if (state.tower && state.tower !== tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); state.tower.setHover(false); }
   tower.setHover(true); // a torre escolhida fica marcada
+  tower.setSelectedUnit(null);
   state.tower = tower; state.floor = null; state.unit = null;
   clearUnitLabels();
   hideAmenities();
@@ -306,6 +309,8 @@ function selectTower(tower: TowerObject) {
 
 function openMirror() {
   const tower = state.tower!;
+  // Recolhe as vistas ao lado dos paineis comerciais, sem mudar a preferencia salva do visitante.
+  viewsCollapsed=true;$('views').classList.add('collapsed');$('views-toggle').firstChild!.textContent='▸';
   $('tower-panel').classList.add('hidden');
   tower.setUnitsVisible(true, state.floor);
   renderMirror();
@@ -375,6 +380,7 @@ function renderUnitLabels() {
 function selectFloor(floor: number, fly = true) {
   const tower = state.tower!;
   const changed = state.floor !== floor;
+  if(changed){state.unit=null;tower.setSelectedUnit(null);$('unit-panel').classList.add('hidden');}
   state.floor = floor; previewFloor(null); tower.setFloorHighlight(null);
   tower.setUnitsVisible(true, floor);
   renderMirror(); renderCrumbs();
@@ -406,25 +412,23 @@ function positionHtml(tower: TowerObject, unit: Unit) {
   const scale = 150 / Math.max(W, D * 1.6); const w = W * scale, d = D * scale; const pad = 14;
   const X = (x: number) => pad + (x + W / 2) * scale; const Z = (z: number) => pad + (z + D / 2) * scale;
   const floorUnits = new Map(b.units.filter((u) => u.floor === unit.floor).map((u) => [u.final ?? '', u] as const));
-  const colW = W / columns;
-  const fill: Record<UnitStatus, string> = { AVAILABLE: 'var(--available)', RESERVED: 'var(--reserved)', SOLD: 'var(--sold)', BLOCKED: 'var(--sold)', UNAVAILABLE: 'var(--sold)' };
+  const colW = (W-coreW) / columns;
+  let facingArrow='';
   const cells = slots.map((slot) => {
-    const u = floorUnits.get(slot.final); const x0 = -W / 2 + colW * slot.column; const z0 = slot.side === 'front' ? -D / 2 : 0;
+    const u = floorUnits.get(slot.final); const x0 = -W / 2 + colW * slot.column+(slot.column>=columns/2?coreW:0); const z0 = slot.side === 'front' ? -D / 2 : 0;
     const selected = u?.id === unit.id;
-    return `<rect x="${X(x0) + 1}" y="${Z(z0) + 1}" width="${colW * scale - 2}" height="${(D / 2) * scale - 2}" rx="2" fill="${selected ? 'var(--accent)' : u ? fill[u.status] : '#ddd'}" opacity="${selected ? 1 : 0.35}"><title>${esc(u?.number ?? slot.final)}</title></rect>`
-      + (selected ? `<text x="${X(x0 + colW / 2)}" y="${Z(z0 + D / 4) + 4}" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">${esc(unit.number)}</text>` : '');
+    if(selected){const x=X(x0+colW/2),z=Z(slot.side==='front'?-D/2:D/2),direction=slot.side==='front'?-1:1;facingArrow=`<path d="M${x} ${z+direction*3} v${direction*20}" stroke="#cc743f" stroke-width="2"/><path d="M${x} ${z+direction*27} l-4 ${-direction*8} h8 Z" fill="#cc743f"/>`;}
+    return `<rect x="${X(x0) + 1}" y="${Z(z0) + 1}" width="${colW * scale - 2}" height="${(D / 2) * scale - 2}" fill="${selected ? '#d27c47' : '#fff'}" stroke="${selected?'#c16a37':'#aaa8b0'}" stroke-width=".8"><title>${esc(u?.number ?? slot.final)}</title></rect>`;
   }).join('');
   // Norte no referencial da torre: desfaz o giro do terreno (azimute) e o da torre.
   const turn = (((dev.viewer.layout?.azimuth ?? 0) + (b.position?.rotation ?? 0)) * Math.PI) / 180;
-  const nx = -Math.sin(turn), nz = -Math.cos(turn);
-  const cx = pad + w + 22, cz = pad + d / 2;
-  const arrow = `<g transform="translate(${cx} ${cz}) rotate(${(Math.atan2(nx, -nz) * 180) / Math.PI})"><circle r="13" fill="#fff" stroke="var(--line)"/><path d="M0 -10 L4 2 L-4 2 Z" fill="var(--accent)"/><path d="M0 10 L4 2 L-4 2 Z" fill="#c3bdcb"/></g><text x="${cx}" y="${cz - 17}" text-anchor="middle" font-size="9" font-weight="700" fill="var(--muted)">N</text>`;
-  const svgW = pad * 2 + w + 44, svgH = pad * 2 + d;
-  const plan = `<svg viewBox="0 0 ${svgW} ${svgH}" width="${svgW}" height="${svgH}" class="tower-plan" aria-label="Posição do apartamento na planta do andar">
-    <rect x="${X(-W / 2)}" y="${Z(-D / 2)}" width="${w}" height="${d}" rx="3" fill="#f4f1ee" stroke="#cfc9d6"/>
+  const plan = `<svg viewBox="0 0 235 150" width="235" height="150" class="tower-plan" aria-label="Posição do apartamento ${esc(unit.number)}; seta laranja indica a fachada; norte para cima">
+    <g transform="translate(98 78) rotate(${turn*180/Math.PI}) translate(${-pad-w/2} ${-pad-d/2})">
+    <rect x="${X(-W/2)}" y="${Z(-D/2)}" width="${w}" height="${d}" fill="#ece7e0"/>
     ${cells}
-    <rect x="${X(-coreW / 2)}" y="${Z(-D * 0.31)}" width="${coreW * scale}" height="${D * 0.62 * scale}" fill="var(--dark)" opacity="0.75"/>
-    ${arrow}</svg>`;
+    <rect x="${X(-coreW/2)}" y="${Z(-D*.31)}" width="${coreW*scale}" height="${D*.62*scale}" fill="#e3d9cb"/>
+    ${facingArrow}</g>
+    <g transform="translate(215 25)"><path d="M0 -9 L4 4 L0 1 L-4 4 Z" fill="#292334"/><text y="16" text-anchor="middle" font-size="9" font-weight="700" fill="#292334">N</text></g></svg>`;
   const floors = b.floorCount ?? b.floors.length;
   const stack = Array.from({ length: floors }, (_, i) => floors - 1 - i).map((f) => `<i class="${f === unit.floor ? 'on' : ''}" title="${floorName(f)}"></i>`).join('');
   return `<div class="position"><div><small>Posição na torre</small>${plan}</div><div class="stack" aria-label="${floorName(unit.floor ?? 0)} de ${floors} pavimentos">${stack}<small>${unit.floor === 0 ? 'Térreo' : `${unit.floor}º`}</small></div></div>`;
@@ -468,7 +472,7 @@ function selectUnit(unit: Unit) {
   panel.querySelector('#see-3d')!.addEventListener('click', () => plan && openInterior(plan, unit));
   panel.querySelector('#interest')!.addEventListener('click', () => leadForm(unit));
   const mesh = tower.unitMeshes.get(unit.id)!;
-  void world.frame3(mesh.getAbsolutePosition().clone(), 95, 52);
+  void world.frame3(mesh.getAbsolutePosition().clone(), window.innerWidth<=760?95:78, 52);
 }
 
 /** Câmera na altura e no lado do apartamento, olhando para fora: a vista aproximada da janela. */
@@ -482,6 +486,8 @@ function viewFromUnit(unit: Unit) {
 }
 
 function renderCrumbs() {
+  document.body.classList.toggle('has-unit',state.unit!=null);
+  for(const tower of site.towers)tower.setContextMuted(state.unit!=null&&tower!==state.tower);
   const items: [string, () => void][] = [['Visão geral', () => back(true)]];
   if (state.tower) items.push([state.tower.building.name, () => { state.unit = null; state.floor = null; state.tower!.setUnitsVisible(false); $('unit-panel').classList.add('hidden'); selectTower(state.tower!); }]);
   if (state.tower && state.floor != null) items.push([floorName(state.floor), () => { state.unit = null; state.tower!.setSelectedUnit(null); $('unit-panel').classList.add('hidden'); selectFloor(state.floor!); renderUnitLabels(); }]);
@@ -497,7 +503,7 @@ function back(all = false) {
   if (!all && state.unit) { state.unit = null; state.tower!.setSelectedUnit(null); $('unit-panel').classList.add('hidden'); renderMirror(); renderCrumbs(); renderUnitLabels(); return; }
   if (!all && state.floor != null) { state.floor = null; clearUnitLabels(); state.tower!.setUnitsVisible(true, null); renderMirror(); renderCrumbs(); void world.frame3(state.tower!.center, state.tower!.height * 2.4 + 60, 62); return; }
   if (!all && state.tower && !$('mirror-panel').classList.contains('hidden')) { state.tower.setUnitsVisible(false); selectTower(state.tower); return; }
-  if (state.tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); state.tower.setHover(false); }
+  if (state.tower) { state.tower.setSelectedUnit(null); state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); state.tower.setHover(false); }
   state.tower = null; state.floor = null; state.unit = null;
   floorLabel?.remove(); floorLabel = null;
   clearUnitLabels();
@@ -636,5 +642,6 @@ function updateInset() {
 }
 const panelObserver = new MutationObserver(updateInset);
 for (const id of ['tower-panel', 'mirror-panel', 'unit-panel', 'amenities-panel']) panelObserver.observe($(id), { attributes: true, attributeFilter: ['class'] });
+window.addEventListener('resize',updateInset);
 
 void start();

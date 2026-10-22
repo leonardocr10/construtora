@@ -116,12 +116,11 @@ def texture_sets(res):
     stones = periodic_noise(s, 0.6, 12)
     stains = periodic_noise(s, 2.2, 13)
     cracks = ridged(periodic_noise(s, 1.6, 14)) * (periodic_noise(s, 2.0, 15) > 0.74)
-    base = lerp_color(srgb((66, 66, 70)), srgb((92, 91, 94)), np.clip(grain * 1.4 - 0.2, 0, 1))
-    base *= (0.86 + 0.22 * stains)[..., None]
-    base = np.where((stones > 0.78)[..., None], base * 1.25 + 0.03, base)
-    base *= (1 - 0.35 * cracks)[..., None]
-    sets["asphalt"] = dict(albedo=base, height=grain * 0.6 + stones * 0.4 - cracks * 0.8, strength=2.5,
-                           rough=0.82 + 0.12 * grain - 0.08 * stains, metal=0.0, meters=4)
+    base = lerp_color(srgb((65, 66, 67)), srgb((77, 78, 79)), grain)
+    base *= (0.96 + 0.06 * stains)[..., None]
+    base = np.where((stones > 0.88)[..., None], base * 1.06, base)
+    sets["asphalt"] = dict(albedo=base, height=grain * 0.35 + stones * 0.2, strength=0.24,
+                           rough=0.94 + 0.04 * grain, metal=0.0, meters=4)
 
     # Concreto (calçada, lajes, muros): manchas suaves, poros escuros, levemente quente.
     blot = periodic_noise(s, 2.0, 21)
@@ -133,23 +132,27 @@ def texture_sets(res):
     sets["concrete"] = dict(albedo=base, height=fine * 0.5 + blot * 0.3 - pores * 0.4, strength=1.6,
                             rough=0.78 + 0.15 * fine, metal=0.0, meters=3)
 
-    # Piso de concreto em placas de 1 m com juntas (calçadas e áreas comuns): 4 × 4 placas por ladrilho.
-    yy, xx = np.mgrid[0:s, 0:s] / s * 4
-    joint = np.minimum(np.abs(xx - np.round(xx)), np.abs(yy - np.round(yy))) < 0.012
-    tone = np.zeros((s, s))
+    # Piso intertravado 20 x 10 cm, junta de ~3 mm, amarracao a meia peca.
+    # O antigo quadriculado de 1 m e as normais fortes faziam o piso parecer azulejo.
+    yy, xx = np.mgrid[0:s, 0:s] / s
+    row = np.floor(yy * 20).astype(int)
+    u = xx * 10 + (row % 2) * 0.5
+    v = yy * 20
+    joint = (np.abs(u - np.round(u)) < 0.008) | (np.abs(v - np.round(v)) < 0.015)
     rng = np.random.default_rng(31)
-    plates = rng.uniform(-0.05, 0.05, (4, 4))
-    tone += plates[np.clip(yy.astype(int), 0, 3), np.clip(xx.astype(int), 0, 3)]
-    base = lerp_color(srgb((190, 186, 178)), srgb((214, 210, 202)), np.clip(blot * 0.8 + tone * 3 + 0.2, 0, 1))
-    base *= (0.96 + 0.06 * fine)[..., None]
-    base = np.where(joint[..., None], base * 0.62, base)
-    sets["paving"] = dict(albedo=base, height=fine * 0.3 - joint * 1.0, strength=2.0,
-                          rough=0.8 + 0.12 * fine, metal=0.0, meters=4)
+    plates = rng.uniform(-0.035, 0.035, (20, 10))
+    tone = plates[row % 20, np.floor(u).astype(int) % 10]
+    base = lerp_color(srgb((177, 175, 165)), srgb((201, 198, 187)), np.clip(0.5 + tone * 4 + (blot-0.5)*0.15, 0, 1))
+    base *= (0.985 + 0.03 * fine)[..., None]
+    base = np.where(joint[..., None], base * 0.79, base)
+    sets["paving"] = dict(albedo=base, height=fine * 0.07 - joint * 0.18, strength=0.55,
+                          rough=0.88 + 0.06 * fine, metal=0.0, meters=2)
 
     # Reboco com pintura acrílica (fachadas): quase branco, tingido pela cor do material; textura fina.
     stucco = periodic_noise(s, 0.15, 41)
     soft = periodic_noise(s, 1.8, 42)
-    base = np.ones((s, s, 3)) * (0.93 + 0.05 * soft + 0.03 * stucco)[..., None]
+    # Variação larga quase nula: manchas de 1–2 m na pintura parecem sombra suja na fachada vista de perto.
+    base = np.ones((s, s, 3)) * (0.95 + 0.008 * soft + 0.03 * stucco)[..., None]
     sets["paint"] = dict(albedo=base, height=stucco, strength=0.9, rough=0.86 + 0.06 * stucco, metal=0.0, meters=2)
 
     # Grama: folhas finas na vertical, tufos e manchas amareladas.
@@ -157,11 +160,11 @@ def texture_sets(res):
     blades = np.clip((np.roll(blades, 1, 0) + blades + np.roll(blades, -1, 0) + np.roll(blades, 2, 0)) / 4, 0, 1)
     clumps = periodic_noise(s, 1.2, 52)
     dry = periodic_noise(s, 2.4, 53)
-    base = lerp_color(srgb((62, 104, 38)), srgb((116, 158, 66)), np.clip(blades * 1.3 - 0.15, 0, 1))
-    base = base * (0.8 + 0.35 * clumps)[..., None]
+    base = lerp_color(srgb((54, 86, 33)), srgb((96, 126, 51)), np.clip(blades * 1.3 - 0.15, 0, 1))
+    base = base * (0.94 + 0.12 * clumps)[..., None]
     base = lerp_color(srgb((150, 150, 84)), np.zeros(3), np.zeros((s, s))) * 0 + base
     base = base * (1 - 0.25 * np.clip(dry - 0.6, 0, 1)[..., None]) + srgb((160, 150, 90))[None, None, :] * (0.25 * np.clip(dry - 0.6, 0, 1))[..., None]
-    sets["grass"] = dict(albedo=base, height=blades * 0.7 + clumps * 0.3, strength=3.0, rough=0.9 + 0.08 * blades, metal=0.0, meters=3)
+    sets["grass"] = dict(albedo=base, height=blades * 0.7 + clumps * 0.15, strength=0.65, rough=0.94 + 0.04 * blades, metal=0.0, meters=2)
 
     # Metal escovado (caixilhos, guarda-corpos): riscos na horizontal.
     streak = periodic_noise(s, 0.3, 61)
@@ -171,11 +174,13 @@ def texture_sets(res):
     return sets
 
 
-def build_textures(out, res):
+def build_textures(out, res, selected=None):
     folder = os.path.join(out, "textures")
     os.makedirs(folder, exist_ok=True)
     catalog = {}
     for name, t in texture_sets(res).items():
+        if selected and name not in selected:
+            continue
         ao = np.clip(0.75 + 0.25 * (t["height"] - t["height"].min()) / max(np.ptp(t["height"]), 1e-6), 0, 1)
         rough = np.clip(t["rough"], 0.04, 1)
         orm = np.stack([ao, rough, np.full_like(rough, t["metal"])], axis=-1)
@@ -509,7 +514,7 @@ def build_broadleaf(out):
     m_leaf = material("VH_Leaf_Broadleaf", rough=0.75, image=leaf, alpha_image=True, double=True)
     m_bark = material("VH_Bark", rough=0.95, image=bark)
     m_core = material("VH_LeafCore", color=(0.05, 0.11, 0.035), rough=0.95)
-    for lod, (n_cards, branch_sides) in enumerate(((90, 7), (34, 5))):
+    for lod, (n_cards, branch_sides) in enumerate(((180, 8), (65, 5))):
         root = empty(f"tree_broadleaf_lod{lod}")
         root["vh_lod"] = lod
         trunk = [(0, 0, 0), (0.05, 0.02, 1.2), (0.1, -0.05, 2.4), (0.05, 0.0, 3.1)]
@@ -529,7 +534,7 @@ def build_broadleaf(out):
         core.materials.append(m_core)
         obj = bpy.data.objects.new(core.name, core); bpy.context.scene.collection.objects.link(obj); obj.parent = root
         pts, nrm = ellipsoid_points(rng, n_cards, 2.6, 2.6, 1.9, (0, 0, 4.7))
-        sizes = rng.uniform(1.4, 2.0, n_cards) * (1.25 if lod else 1)
+        sizes = rng.uniform(0.95, 1.65, n_cards) * (1.4 if lod else 1)
         cards(f"broadleaf_leaves_lod{lod}", pts, sizes, nrm, m_leaf, root, rng, cross=lod == 0)
         if lod:
             root.location.x = 0  # mesma origem; o visualizador troca por distância
@@ -539,50 +544,53 @@ def build_broadleaf(out):
 
 
 def build_palm(out):
-    """Palmeira de folhas pinadas (estilo palmeira-real / jerivá, presente no paisagismo do e-book): ~7 m."""
+    """Palmeira pinada: foliolos reais, curvos e afilados, sem a silhueta de cartao triangular."""
     import bpy
     reset()
     rng = np.random.default_rng(202)
-    palette = [srgb(c) for c in ((70, 110, 44), (88, 128, 52), (60, 98, 40))]
-    frond = image_from_array("leaf_palm", draw_leaf_atlas(512, 2, palette, 0.42, 0.11, 70, kind="frond"))
     bark = np.ones((128, 128, 4), dtype=np.float32)
     rings = (np.sin(np.linspace(0, 16 * math.pi, 128)) * 0.5 + 0.5)[:, None]
     bark[..., :3] = srgb((150, 138, 118))[None, None, :] * (0.75 + 0.25 * rings)[..., None] * (0.9 + 0.1 * periodic_noise(128, 0.6, 9))[..., None]
-    m_frond = material("VH_Leaf_Palm", rough=0.7, image=frond, alpha_image=True, double=True)
+    m_fronds = [material(f"VH_PalmFoliage{k}", color=tuple((np.array(c)/255)**2.2), rough=0.86, double=True)
+                for k,c in enumerate(((74,106,42),(94,127,52),(60,91,33)))]
     m_trunk = material("VH_PalmTrunk", rough=0.9, image=image_from_array("palm_bark", bark))
-    for lod, (n_fronds, seg) in enumerate(((16, 7), (9, 4))):
+    for lod, (n_fronds, seg) in enumerate(((18, 12), (11, 7))):
         root = empty(f"tree_palm_lod{lod}")
         root["vh_lod"] = lod
         height = 6.8
         trunk = [(0.03 * math.sin(i * 0.5), 0.02 * i, height * i / 6) for i in range(7)]
         tube(f"palm_trunk_lod{lod}", trunk, [0.2, 0.17, 0.15, 0.14, 0.14, 0.15, 0.18], 8 if lod == 0 else 5, m_trunk, root, uv_scale=0.6)
         top = np.array(trunk[-1])
-        verts, faces, uvs = [], [], []
+        verts, faces, face_mats = [], [], []
         for f in range(n_fronds):
             yaw = 2 * math.pi * f / n_fronds + rng.normal(0, 0.12)
-            pitch0 = math.radians(rng.uniform(25, 60))
+            pitch0 = math.radians(rng.uniform(25, 64))
             length = rng.uniform(2.6, 3.4)
-            width = 0.9
             d = np.array([math.cos(yaw), math.sin(yaw), 0])
             side = np.array([-math.sin(yaw), math.cos(yaw), 0])
-            base = len(verts)
+            path = []
             for k in range(seg + 1):
                 t = k / seg
-                pitch = pitch0 - t * math.radians(95)  # arqueia e cai na ponta
-                p = top + d * (math.cos(pitch0) * 0)
-                # posição ao longo do arco
                 along = sum(math.cos(pitch0 - (j / seg) * math.radians(95)) for j in range(k)) * length / seg
                 up = sum(math.sin(pitch0 - (j / seg) * math.radians(95)) for j in range(k)) * length / seg
-                c = top + d * along + np.array([0, 0, up])
-                w = width * (0.35 + 0.65 * math.sin(math.pi * min(1, t * 1.05 + 0.05))) / 2
-                droop = np.array([0, 0, -0.18 * w])  # folíolos caídos para os lados (seção em V)
-                verts.append(tuple(c - side * w + droop))
-                verts.append(tuple(c + side * w + droop))
-                if k:
-                    a = base + (k - 1) * 2
-                    faces.append((a, a + 1, a + 3, a + 2))
-                    uvs.append([(0, (k - 1) / seg), (1, (k - 1) / seg), (1, k / seg), (0, k / seg)])
-        mesh_object(f"palm_fronds_lod{lod}", verts, faces, [m_frond], uvs=uvs, smooth=True, parent=root)
+                path.append(top + d * along + np.array([0, 0, up]))
+            tube(f"palm_rachis{f}_lod{lod}", path, np.linspace(0.025,0.004,seg+1), 4, m_fronds[1], root)
+            pairs = 25 if lod == 0 else 13
+            for j in range(pairs):
+                t = 0.1 + j / pairs * 0.86
+                q = t * seg; k = min(seg-1,int(q)); c = path[k]*(1-q+k)+path[k+1]*(q-k)
+                blade_len = (0.2 + 0.55*math.sin(math.pi*t)**0.8) * rng.uniform(0.88,1.1)
+                blade_w = (0.045 if lod == 0 else 0.075) * math.sin(math.pi*t)**0.4
+                for sign in (-1,1):
+                    tip = c + side * sign * blade_len + d * blade_len*0.3 + np.array([0,0,-blade_len*0.45])
+                    mid = c*0.46 + tip*0.54 + np.array([0,0,blade_len*0.16])
+                    a = len(verts)
+                    verts.extend([tuple(c-d*blade_w*0.25),tuple(mid-d*blade_w),tuple(tip),tuple(mid+d*blade_w),tuple(mid+np.array([0,0,blade_w*0.4]))])
+                    faces.extend([(a,a+1,a+4),(a+1,a+2,a+4),(a+2,a+3,a+4),(a+3,a,a+4)])
+                    face_mats.extend([f%3]*4)
+        # Mesma estrutura de atributos da nervura (UV), para mesclar por material no Babylon.
+        mesh_object(f"palm_fronds_lod{lod}", verts, faces, m_fronds, face_mats=face_mats,
+                    uvs=[[(0,0),(1,0),(0.5,1)] for _ in faces], smooth=True, parent=root)
     path = os.path.join(out, "models", "tree_palm.glb")
     export(path)
     return {"file": "models/tree_palm.glb", "bytes": os.path.getsize(path), "triangles": triangles(), "height": 9.0, "crown": 6.0}
@@ -798,7 +806,8 @@ def main(argv):
     catalog["blender"] = bpy.app.version_string
     if "textures" in only:
         reset()
-        catalog["textures"] = build_textures(out, res)
+        selected = set(args[args.index("--sets") + 1].split(",")) if "--sets" in args else None
+        catalog["textures"] = {**catalog.get("textures", {}), **build_textures(out, res, selected)}
     if "sky" in only:
         # Mesmos sóis do visualizador (world.ts): dia a 42° de elevação, pôr do sol a 14°.
         catalog["sky"] = {"day": build_sky(out, "day", 42, 35), "sunset": build_sky(out, "sunset", 9, -72)}

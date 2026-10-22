@@ -213,7 +213,9 @@ export class ImplantationService {
         return { kind: g.kind, points: g.points.map(([x, y]) => [round(x, 1), round(y, 1)] as Point) };
       });
       const { groundPlan: before, groundCorrection: _legacy, ...rest } = current;
-      const layout = clean.length ? { ...rest, groundPlan: { polygons: clean, updatedAt: new Date().toISOString() } } : rest;
+      const metadata = before && typeof before === 'object' && !Array.isArray(before) ? before : {};
+      // Editar contornos nao apaga as fileiras revisadas; o visualizador as recorta pelo solo atualizado.
+      const layout = clean.length ? { ...rest, groundPlan: { ...metadata, polygons: clean, updatedAt: new Date().toISOString() } } : rest;
       const config = await db.viewerConfiguration.update({ where: { developmentId }, data: { publicLayout: layout as Prisma.InputJsonValue } });
       const count = (v: unknown) => ((v as { polygons?: unknown[] } | undefined)?.polygons?.length ?? 0);
       await this.audit(db, context, 'ViewerConfiguration', config.id, 'UPDATE_GROUND_PLAN', { polygons: clean.length }, { polygons: count(before) });

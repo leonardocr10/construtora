@@ -2,31 +2,15 @@ import { Texture, TransformNode, Vector3, DynamicTexture, type Color3, type Matr
 import type { Point, Surroundings } from '../types';
 import { asphaltTile, grassTile, pavingTile } from './ground';
 import { crownGeometry } from './trees';
-import { box, compose, cone, instanced, merge, meshFrom, pbr, plane, polygon, prism, rgb, rotateX, rotateY, shadows, type Geo } from './geometry';
+import { box, compose, extrude, instanced, merge, meshFrom, pbr, plane, polygon, rgb, rotateX, shadows, translate, type Geo } from './geometry';
+import {buildContextBuildings} from './context-buildings';
+import {partsToGeo} from './ground-vector';
+import {buildRoadNetwork,placeHouses,roadWidth} from './urban-geometry';
+import clipping,{type MultiPolygon} from 'polygon-clipping';
 
-const roadWidth: Record<string, number> = {
-  motorway: 22, trunk: 20, primary: 16, secondary: 13, tertiary: 11, unclassified: 8, residential: 8, living_street: 6,
-  service: 4.5, motorway_link: 9, trunk_link: 9, primary_link: 9, secondary_link: 8, tertiary_link: 8,
-};
 const labeledRoads = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary']);
 const maxRoadLabels = 8;
-const houseRoads = new Set(['residential', 'living_street', 'unclassified', 'tertiary']);
-
-/** Faixa plana ao longo de uma polilinha (ruas), voltada para cima; UV em metros. */
-function ribbon(points: Point[], width: number, y: number): Geo {
-  const positions: number[] = []; const indices: number[] = []; const uvs: number[] = []; const normals: number[] = [];
-  const half = width / 2;
-  for (let i = 0; i < points.length; i++) {
-    const prev = points[Math.max(i - 1, 0)]; const next = points[Math.min(i + 1, points.length - 1)];
-    let dx = next[0] - prev[0]; let dz = next[1] - prev[1];
-    const len = Math.hypot(dx, dz) || 1; dx /= len; dz /= len;
-    const l = [points[i][0] - dz * half, points[i][1] + dx * half]; const r = [points[i][0] + dz * half, points[i][1] - dx * half];
-    positions.push(l[0], y, l[1], r[0], y, r[1]); uvs.push(l[0], l[1], r[0], r[1]); normals.push(0, 1, 0, 0, 1, 0);
-    // UV em coordenadas de mundo (metros): a textura continua sem emenda nos cruzamentos.
-    if (i > 0) { const a = (i - 1) * 2; indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
-  }
-  return { positions, indices, uvs, normals };
-}
+const toGeo=(shape:MultiPolygon,y:number)=>partsToGeo(shape.map(p=>({outer:p[0] as Point[],holes:p.slice(1) as Point[][]})),y,p=>p);
 
 /** Textura repetida a cada `meters` metros (UV da faixa em metros). */
 function tiled(scene: Scene, name: string, canvas: HTMLCanvasElement, meters: number) {
@@ -46,8 +30,8 @@ function canvas2d(width: number, height: number) {
 function cityGroundTile(size: number) {
   const { canvas, ctx } = canvas2d(size, size);
   const random = seeded(7);
-  ctx.fillStyle = '#b8bf93'; ctx.fillRect(0, 0, size, size);
-  const blobs: [string, number][] = [['rgba(132,160,96,0.22)', 22], ['rgba(190,170,130,0.16)', 14], ['rgba(110,140,84,0.18)', 14], ['rgba(212,210,182,0.16)', 12]];
+  ctx.fillStyle = '#9da986'; ctx.fillRect(0, 0, size, size);
+  const blobs: [string, number][] = [['rgba(132,160,96,0.09)', 22], ['rgba(190,170,130,0.07)', 14], ['rgba(110,140,84,0.08)', 14], ['rgba(212,210,182,0.06)', 12]];
   for (const [color, count] of blobs) for (let i = 0; i < count; i++) {
     const x = random() * size, y = random() * size, r = size * (0.05 + random() * 0.16);
     for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) {
@@ -60,7 +44,7 @@ function cityGroundTile(size: number) {
 }
 
 /** Fachada de casa (cada face da caixa recebe a imagem inteira): reboco claro tingido pela cor da casa, rodapé, porta e janelas. */
-function houseWallTexture(scene: Scene) {
+function houseWallTexture(scene: Scene,front=true) {
   const { canvas, ctx } = canvas2d(256, 128);
   ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 256, 128);
   ctx.fillStyle = '#d9d4cc'; ctx.fillRect(0, 112, 256, 16); // rodapé
@@ -71,9 +55,12 @@ function houseWallTexture(scene: Scene) {
     ctx.fillStyle = '#e8e6e0'; ctx.fillRect(x + w / 2 - 1, 41, 2, 40);
   };
   pane(24, 44); pane(176, 52);
-  ctx.fillStyle = '#7b5a43'; ctx.fillRect(108, 46, 34, 66); // porta
-  ctx.fillStyle = '#5f4433'; ctx.fillRect(112, 50, 26, 58);
-  const texture = new DynamicTexture('house-wall', canvas, scene, true);
+  if(front){
+    ctx.fillStyle = '#55615e'; ctx.fillRect(108, 46, 34, 66);
+    ctx.fillStyle = '#697470'; ctx.fillRect(112, 50, 26, 58);
+    ctx.fillStyle = '#d8d9d6'; ctx.fillRect(133,78,3,2);
+  }else pane(106,38);
+  const texture = new DynamicTexture(front?'house-front':'house-side', canvas, scene, true);
   texture.update(true); texture.anisotropicFilteringLevel = 4;
   return texture;
 }
@@ -135,21 +122,21 @@ export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: P
   const flat = (name: string, geo: Geo, material: ReturnType<typeof pbr>) => shadows(meshFrom(name, geo, scene, material, group), false);
 
   const disc = Array.from({ length: 64 }, (_, i) => { const t = (i / 64) * Math.PI * 2; return [Math.cos(t) * data.radius * 2.6, Math.sin(t) * data.radius * 2.6] as Point; });
-  flat('city-ground', polygon(disc, -0.05), pbr(scene, 'city-ground', { map: tiled(scene, 'city-ground', cityGroundTile(512), 90), roughness: 1 }));
+  flat('city-ground', polygon(disc, -0.05), pbr(scene, 'city-ground', { map: tiled(scene, 'city-ground', cityGroundTile(512), 35), roughness: 1 }));
 
-  const greens = data.green.filter((g) => g.points.length > 3).map((g) => polygon(g.points, 0.02));
+  // Uma unica topologia: as calcadas sao a diferenca, nao faixas brancas sobre os cruzamentos.
+  const network=buildRoadNetwork(data.roads,exclusion,data.buildings.map(b=>b.points));
+
+  const greens = data.green.filter((g) => g.points.length > 3).map((g) => toGeo(clipping.difference([g.points],network.corridor),.02)).filter((g):g is Geo=>!!g);
   if (greens.length) flat('greens', merge(greens), pbr(scene, 'greens', { map: tiled(scene, 'grass', grassTile(512), 8), roughness: 1, doubleSided: true }));
   const water = data.water.filter((g) => g.points.length > 3).map((g) => polygon(g.points, 0.05));
   if (water.length) flat('water', merge(water), pbr(scene, 'water', { color: 0x5b9bc7, roughness: 0.15, metalness: 0.1, doubleSided: true }));
 
   const grid = new SegmentGrid();
-  const asphalt: Geo[] = []; const curbs: Geo[] = [];
   const roadLabels: SurroundingsResult['roadLabels'] = [];
   const named = new Map<string, { points: Point[]; length: number; total: number }>();
-  for (const road of data.roads) {
+  for (const road of [...network.roads,...network.repairs]) {
     const width = roadWidth[road.kind]; if (!width || road.points.length < 2) continue;
-    curbs.push(ribbon(road.points, width + 2.2, 0.06));
-    asphalt.push(ribbon(road.points, width, 0.1));
     for (let i = 1; i < road.points.length; i++) grid.add(road.points[i - 1], road.points[i], width / 2);
     // Só as vias principais recebem nome na tela; ruas de bairro ficariam amontoadas.
     if (road.name && labeledRoads.has(road.kind)) {
@@ -159,8 +146,9 @@ export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: P
       else { current.total += length; if (length > current.length) Object.assign(current, { points: road.points, length }); }
     }
   }
-  if (curbs.length) flat('sidewalks', merge(curbs), pbr(scene, 'sidewalks', { map: tiled(scene, 'paving', pavingTile(256, 64), 4), roughness: 0.95, doubleSided: true }));
-  if (asphalt.length) flat('roads', merge(asphalt), pbr(scene, 'roads', { map: tiled(scene, 'asphalt', asphaltTile(512), 10), roughness: 0.9, doubleSided: true }));
+  const sidewalks=toGeo(network.sidewalks,.12),asphalt=toGeo(network.asphalt,.1);
+  if(sidewalks)flat('sidewalks',sidewalks,pbr(scene,'sidewalks',{map:tiled(scene,'paving',pavingTile(256,64),4),roughness:.95,doubleSided:true}));
+  if(asphalt)flat('roads',asphalt,pbr(scene,'roads',{map:tiled(scene,'asphalt',asphaltTile(512),10),roughness:.94,doubleSided:true}));
   // Faixas tracejadas no eixo das vias principais.
   const dashes: Matrix[] = [];
   for (const road of data.roads) {
@@ -185,40 +173,29 @@ export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: P
     roadLabels.push({ name, position });
   }
 
-  const mapped = data.buildings.filter((b) => b.points.length > 3).map((b) => prism(b.points, 0, Math.max(3, Math.min(b.height, 60))));
-  const occupied: Point[] = data.buildings.map((b) => b.points[0]);
-  if (mapped.length) shadows(meshFrom('osm-buildings', merge(mapped), scene, pbr(scene, 'osm-buildings', { color: 0xe4e2dc, roughness: 0.95 }), group), true);
+  const mappedBuildings=buildContextBuildings(scene,data,group);
 
-  // Casas ilustrativas: lotes de 10 m ao longo das ruas residenciais, dos dois lados.
-  const houses: Matrix[] = []; const roofs: Matrix[] = [];
-  for (const road of data.roads) {
-    if (!houseRoads.has(road.kind)) continue;
-    const half = (roadWidth[road.kind] ?? 8) / 2;
-    for (let i = 1; i < road.points.length; i++) {
-      const a = road.points[i - 1]; const b = road.points[i];
-      const len = Math.hypot(b[0] - a[0], b[1] - a[1]); if (len < 14) continue;
-      const dx = (b[0] - a[0]) / len; const dz = (b[1] - a[1]) / len;
-      for (let d = 7; d < len - 7; d += 10.5) {
-        for (const side of [1, -1]) {
-          if (random() < 0.18) continue;
-          const offset = half + 9;
-          const p: Point = [a[0] + dx * d - dz * offset * side, a[1] + dz * d + dx * offset * side];
-          if (Math.hypot(p[0], p[1]) > data.radius) continue;
-          if (insidePolygon(p, exclusion) || grid.near(p, 5.5) || occupied.some((o) => Math.hypot(o[0] - p[0], o[1] - p[1]) < 12)) continue;
-          const w = 7 + random() * 2.5; const depth = 9 + random() * 4; const h = 3.2 + (random() < 0.15 ? 3 : 0);
-          const yaw = Math.atan2(dx, dz);
-          houses.push(compose(p[0], h / 2, p[1], 0, yaw, 0, w, h, depth));
-          roofs.push(compose(p[0], h + 0.6, p[1], 0, yaw, 0, w + 0.6, 1.2, depth + 0.6));
-        }
-      }
-    }
+  const sites=placeHouses(network,exclusion,data.buildings.map(b=>b.points),data.radius);
+  const houses:Matrix[]=[],roofs:Matrix[]=[],slabs:Matrix[]=[],paths:Matrix[]=[],awnings:Matrix[]=[];
+  for(const s of sites){
+    const [x,z]=s.center,w=s.width,d=s.depth,h=s.height;
+    houses.push(compose(x,h/2,z,0,s.yaw,0,w,h,d));
+    (s.flatRoof?slabs:roofs).push(compose(x,h+(s.flatRoof?.13:.65),z,0,s.yaw,0,w+.6,s.flatRoof?.26:1.3,d+.6));
+    const forward=d/2+s.pathLength/2;
+    paths.push(compose(x+s.front[0]*forward,.065,z+s.front[1]*forward,0,s.yaw,0,1.3,1,s.pathLength));
+    awnings.push(compose(x+s.front[0]*(d/2+.4),2.7,z+s.front[1]*(d/2+.4),0,s.yaw,0,1.8,.12,1));
   }
   if (houses.length) {
-    const walls = [0xf1ece2, 0xe8e2d4, 0xdfe3e2, 0xf3eadb, 0xe6ddd0, 0xd9d4ca]; const tiles = [0xc9643f, 0xb85a3a, 0xd27a52, 0xa95238, 0x8f8a84];
+    const walls = [0xf1ece2, 0xe8e2d4, 0xdfe3e2, 0xf3eadb, 0xe6ddd0, 0xd9d4ca]; const tiles = [0xb26b50, 0xa15e48, 0xbf8060, 0x9c6855, 0x777b78];
     const wallColors: Color3[] = houses.map(() => rgb(walls[Math.floor(random() * walls.length)]));
     const roofColors: Color3[] = roofs.map(() => rgb(tiles[Math.floor(random() * tiles.length)]));
-    shadows(instanced('houses', box(1, 1, 1), scene, pbr(scene, 'houses', { map: houseWallTexture(scene), roughness: 0.95 }), houses, group, wallColors), true);
-    shadows(instanced('house-roofs', rotateY(cone(0.72, 1, 4), Math.PI / 4), scene, pbr(scene, 'house-roofs', { map: roofTexture(scene), roughness: 0.85 }), roofs, group, roofColors), true);
+    shadows(instanced('houses',box(1,1,1,['px','nx','py','ny','nz']),scene,pbr(scene,'houses',{map:houseWallTexture(scene,false),roughness:.95}),houses,group,wallColors),true);
+    shadows(instanced('house-fronts',box(1,1,1,['pz']),scene,pbr(scene,'house-fronts',{map:houseWallTexture(scene),roughness:.95}),houses,group,wallColors),true);
+    if(roofs.length)shadows(instanced('house-roofs',translate(extrude([[-.5,-.5],[.5,-.5],[0,.5]],1),0,0,-.5),scene,pbr(scene,'house-roofs',{map:roofTexture(scene),roughness:.9}),roofs,group,roofColors),true);
+    if(slabs.length)shadows(instanced('house-flat-roofs',box(1,1,1),scene,pbr(scene,'house-flat-roofs',{color:0xb5b6b0,roughness:.95}),slabs,group),true);
+    flat('house-yards',merge(sites.map(s=>polygon(s.footprint,.035))),pbr(scene,'house-yards',{map:tiled(scene,'yard-grass',grassTile(256),6),roughness:1}));
+    instanced('house-paths',rotateX(plane(1,1),-Math.PI/2),scene,pbr(scene,'house-paths',{color:0xc7c6ba,roughness:1}),paths,group);
+    shadows(instanced('house-awnings',box(1,1,1),scene,pbr(scene,'house-awnings',{color:0xe2dfd5,roughness:.9}),awnings,group),true);
   }
 
   // Árvores nas áreas verdes.
@@ -230,11 +207,12 @@ export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: P
     const count = Math.min(400, Math.floor(((maxX - minX) * (maxZ - minZ)) / 600));
     for (let i = 0; i < count; i++) {
       const p: Point = [minX + random() * (maxX - minX), minZ + random() * (maxZ - minZ)];
-      if (!insidePolygon(p, area.points) || insidePolygon(p, exclusion)) continue;
       const s = 3 + random() * 3;
+      if (!insidePolygon(p, area.points) || insidePolygon(p, exclusion)||grid.near(p,s+1.2)) continue;
       trees.push(compose(p[0], s, p[1], 0, 0, 0, s, s * 1.1, s));
     }
   }
   if (trees.length) shadows(instanced('osm-trees', crownGeometry(), scene, pbr(scene, 'osm-trees', { color: 0x5b9a45, roughness: 0.9 }), trees, group), true);
+  group.metadata={roadRepairs:network.repairs,houseCount:sites.length,roadSurface:'union-buffer',sidewalks:'corridor-minus-asphalt',mappedBuildings};
   return { group, illustrativeHouses: houses.length, roadLabels };
 }

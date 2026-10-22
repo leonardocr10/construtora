@@ -38,11 +38,14 @@ def to_png(src, dst):
 def main(argv):
     args = argv[argv.index("--") + 1:]
     library, ktx = os.path.abspath(args[0]), args[1]
+    selected = set(args[args.index("--sets") + 1].split(",")) if "--sets" in args else None
     catalog_path = os.path.join(library, "library.json")
     catalog = json.load(open(catalog_path, encoding="utf-8"))
     total_webp = total_ktx = 0
     with tempfile.TemporaryDirectory() as tmp:
         for name, info in catalog.get("textures", {}).items():
+            if selected and name not in selected:
+                continue
             for key, entry in info["files"].items():
                 kind = key.replace("_lo", "")
                 src = os.path.join(library, entry["file"])

@@ -1,5 +1,6 @@
 import type { Color3 } from './babylon';
-import type { GroundMap } from './ground';
+import { Ground, surfaceFits, type GroundMap } from './ground';
+import type { ParkingRow } from '../types';
 import { asphaltAt, carColor, fleetColor, groundAt, type DetectedCar } from './lot-relief';
 
 /** Carro parado numa vaga: cor, modelo (0 hatch, 1 sedã, 2 SUV) e se entrou de ré (frente para o corredor). */
@@ -27,8 +28,26 @@ const hash = (x: number, y: number) => { const t = Math.sin(x * 12.9898 + y * 78
  * 4. cada vaga é ocupada ou não conforme a arte original (mancha de carro dentro dela), com a cor desenhada.
  * `art` é a imagem original (antes de apagar os carros), `map` o chão já classificado.
  */
-export function planParking(detected: DetectedCar[], map: GroundMap, art: ImageData, metersPerPixel: number) {
+export function planParking(detected: DetectedCar[], map: GroundMap, art: ImageData, metersPerPixel: number, reviewedRows?: ParkingRow[]) {
   const m = 1 / metersPerPixel;
+  if (reviewedRows?.length) {
+    const stalls: Stall[] = [];
+    for (const row of reviewedRows) {
+      const [ax,ay] = row.a, [bx,by] = row.b;
+      const length = Math.hypot(bx-ax,by-ay);
+      if (!Number.isFinite(length) || length < 1) continue;
+      const width = Math.max(2.3, Math.min(3.5,row.width ?? stallWidth));
+      const angle = Math.atan2(by-ay,bx-ax)-Math.PI/2;
+      for (let s=0;s<=length;s+=width*m) {
+        const x=ax+(bx-ax)*s/length, y=ay+(by-ay)*s/length;
+        if (!surfaceFits(map,x,y,angle,4.8*m,(width-0.15)*m,Ground.Asphalt)) continue;
+        if (stalls.some(stall=>Math.hypot(stall.x-x,stall.y-y)<2.3*m)) continue;
+        stalls.push({x,y,angle,width,curb:row.curb<0?-1:1});
+      }
+    }
+    occupyStalls(stalls,detected,art,metersPerPixel);
+    return {stalls};
+  }
   const cls = (x: number, y: number) => {
     const gx = Math.round(x) - map.x0, gy = Math.round(y) - map.y0;
     return gx < 0 || gy < 0 || gx >= map.w || gy >= map.h ? Outside : map.classes[gy * map.w + gx];
@@ -38,7 +57,8 @@ export function planParking(detected: DetectedCar[], map: GroundMap, art: ImageD
   const onPlaza = (x: number, y: number) => { const gx = Math.round(x) - map.x0, gy = Math.round(y) - map.y0; return !!map.plaza && gx >= 0 && gy >= 0 && gx < map.w && gy < map.h && map.plaza[gy * map.w + gx] === 1; };
   const drivable = (x: number, y: number) => {
     if (onPlaza(x, y)) return false;
-    const k = cls(x, y); if (k === Asphalt) return true; if (k !== Paving) return false;
+    const k = cls(x, y); if (k === Asphalt) return true;
+    if (map.manual || k !== Paving) return false;
     const i = (Math.round(y) * width + Math.round(x)) * 4; const r = data[i], g = data[i + 1], b = data[i + 2];
     const lum = 0.3 * r + 0.59 * g + 0.11 * b;
     // Fundo de vaga: bege acinzentado (r − g pequeno). Deque e piso de lazer são rosados/terracota (r − g ≥ 18).
@@ -176,7 +196,14 @@ export function planParking(detected: DetectedCar[], map: GroundMap, art: ImageD
     }
   }
 
-  // Ocupação pela arte original: mancha que não é asfalto nem chão (carro e sombra) no miolo da vaga.
+  occupyStalls(stalls,detected,art,metersPerPixel);
+  return { stalls };
+}
+
+/** Ocupacao lida da arte, compartilhada entre fileiras revisadas e detectadas automaticamente. */
+function occupyStalls(stalls: Stall[], detected: DetectedCar[], art: ImageData, metersPerPixel: number) {
+  const m = 1 / metersPerPixel;
+  const {data,width} = art;
   for (const stall of stalls) {
     const ux = Math.cos(stall.angle), uy = Math.sin(stall.angle);
     let solid = 0, n = 0, r = 0, g = 0, b = 0, lit = 0;
@@ -195,7 +222,6 @@ export function planParking(detected: DetectedCar[], map: GroundMap, art: ImageD
     const color = near ? near.color : lit > solid * 0.3 ? carColor([r / lit, g / lit, b / lit]) : fleetColor(stall.x * 31 + stall.y * 17);
     stall.car = { color, kind: roll < 0.45 ? 0 : roll < 0.75 ? 1 : 2, reversed: hash(stall.y, stall.x) < 0.28 };
   }
-  return { stalls };
 }
 
 /** Desenha os retângulos das vagas (em pixels da arte, deslocados por x0/y0) num contexto 2D. */

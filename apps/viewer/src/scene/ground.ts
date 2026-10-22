@@ -425,6 +425,20 @@ export function manualAt(map: GroundMap, x: number, y: number) {
   return !map.manual || gx < 0 || gy < 0 || gx >= map.w || gy >= map.h ? 0 : map.manual[gy * map.w + gx];
 }
 
+/** Verifica a area inteira da vaga/canteiro, inclusive fora do lote; coordenadas em pixels. */
+export function surfaceFits(map: GroundMap, x: number, y: number, angle: number, length: number, width: number, kind: Ground): boolean {
+  const ux = Math.cos(angle), uy = Math.sin(angle);
+  const along = Math.max(1, Math.ceil(length)), across = Math.max(1, Math.ceil(width));
+  for (let a = 0; a <= along; a++) for (let b = 0; b <= across; b++) {
+    // Amostra pelo lado interior da borda: contato exato com o meio-fio nao e invasao.
+    // Evita que cos(pi/2) e a conversao para pixel arredondem para a calcada vizinha.
+    const u = length * (a / along - 0.5) * (1 - 1e-8), v = width * (b / across - 0.5) * (1 - 1e-8);
+    const ix = Math.floor(x + ux * u - uy * v) - map.x0, iy = Math.floor(y + uy * u + ux * v) - map.y0;
+    if (ix < 0 || iy < 0 || ix >= map.w || iy >= map.h || map.classes[iy * map.w + ix] !== kind) return false;
+  }
+  return true;
+}
+
 let seed = 1;
 const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 
@@ -439,8 +453,12 @@ export const asphaltTile = (size: number) => tile(size, (ctx, s) => {
   ctx.fillStyle = '#5b5d64'; ctx.fillRect(0, 0, s, s);
   for (let i = 0; i < s * s * 0.06; i++) { const l = 50 + rand() * 40; ctx.fillStyle = `rgba(${l},${l},${l + 6},${0.25 + rand() * 0.35})`; ctx.fillRect(rand() * s, rand() * s, 1.4, 1.4); }
   for (let i = 0; i < 6; i++) { // manchas suaves de desgaste
-    const g = ctx.createRadialGradient(rand() * s, rand() * s, 0, rand() * s, rand() * s, s * (0.15 + rand() * 0.25));
-    g.addColorStop(0, `rgba(0,0,0,${0.05 + rand() * 0.05})`); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(0, 0, s, s);
+    // Centros coincidentes: centros aleatorios distintos criavam cones/triangulos escuros na rua.
+    const x=rand()*s,y=rand()*s,r=s*(.15+rand()*.25),alpha=.025+rand()*.035;
+    for(const ox of [-s,0,s])for(const oy of [-s,0,s]){
+      const g=ctx.createRadialGradient(x+ox,y+oy,0,x+ox,y+oy,r);
+      g.addColorStop(0,`rgba(0,0,0,${alpha})`);g.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=g;ctx.fillRect(x+ox-r,y+oy-r,r*2,r*2);
+    }
   }
 });
 
@@ -519,7 +537,7 @@ export function paintGround(art: HTMLCanvasElement, map: GroundMap, metersPerPix
   // Demarcação das vagas: linhas nas divisas de cada vaga da fileira (2,5 × 5 m), só sobre o asfalto.
   if (stalls.length) {
     lctx.globalCompositeOperation = 'source-over'; lctx.clearRect(0, 0, W, H);
-    lctx.strokeStyle = '#f2ead2'; lctx.lineWidth = 0.1 * pxPerMeter; lctx.lineCap = 'butt';
+    lctx.strokeStyle = '#ddb64d'; lctx.lineWidth = 0.09 * pxPerMeter; lctx.lineCap = 'butt';
     lctx.beginPath();
     for (const stall of stalls) {
       const cx = (stall.x - map.x0) * scale; const cy = (stall.y - map.y0) * scale;

@@ -90,6 +90,25 @@ class ParamsTest(unittest.TestCase):
         b = bt.build_geometry(bt.normalize(FIXED))
         self.assertEqual(a["glass-lit"].verts, b["glass-lit"].verts)
 
+    def test_transparent_windows_have_real_room_depth(self):
+        p = bt.normalize(FIXED)
+        meshes = bt.build_geometry(p)
+        self.assertGreater(meshes["interior-shell"].room_count, 50)
+        self.assertGreater(meshes["interior-furniture"].face_count, 100)
+        specs = bt.material_specs(p["colors"], p["facade"])
+        for name in ("VH_Glass", "VH_GlassLit", "VH_GlassSoft", "VH_GlassWarm"):
+            self.assertGreaterEqual(specs[name]["alpha"], .7)
+            self.assertLess(specs[name]["alpha"], .9)
+            self.assertEqual(specs[name]["metallic"], 0)
+            self.assertNotIn("emission", specs[name])
+        self.assertGreater(specs["VH_GlassFrost"]["alpha"], .6)
+        # A antiga caixa de alvenaria tinha faces externas de altura total atras de cada vidro.
+        for face in meshes["body"].faces:
+            points = [meshes["body"].verts[i] for i in face]
+            yspan = max(p[1] for p in points)-min(p[1] for p in points)
+            if yspan > .5:
+                self.assertTrue(all(abs(p[0]) <= min(4.2, FIXED["model3d"]["width"]*.12)/2+.13 for p in points))
+
 
 @unittest.skipUnless(blender_path(), "BLENDER_PATH ausente")
 class BlenderExportTest(unittest.TestCase):
@@ -110,6 +129,12 @@ class BlenderExportTest(unittest.TestCase):
             names = {n.get("name") for n in gltf["nodes"]}
             self.assertTrue({"TS1", "TS1-visual", "TS1-units", "TS1-glass", "TS1-glass-lit", "TS1-F0-U01", "TS1-F3-U06"} <= names)
             self.assertNotIn("KHR_draco_mesh_compression", gltf.get("extensionsUsed", []))
+            self.assertIn("TS1-interior-shell", names)
+            self.assertIn("TS1-interior-furniture", names)
+            glass = next(m for m in gltf["materials"] if m["name"] == "VH_Glass")
+            self.assertEqual(glass.get("alphaMode"), "BLEND")
+            self.assertGreaterEqual(glass["pbrMetallicRoughness"]["baseColorFactor"][3], .7)
+            self.assertLess(glass["pbrMetallicRoughness"]["baseColorFactor"][3], .9)
 
 
 if __name__ == "__main__":

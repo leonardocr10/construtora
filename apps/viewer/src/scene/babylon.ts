@@ -29,6 +29,7 @@ export { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPi
 export { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline';
 export { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 export { Vector3, Matrix, Quaternion } from '@babylonjs/core/Maths/math.vector';
+export { Plane } from '@babylonjs/core/Maths/math.plane';
 export { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader';
 export type { AssetContainer } from '@babylonjs/core/assetContainer';
 export { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture';

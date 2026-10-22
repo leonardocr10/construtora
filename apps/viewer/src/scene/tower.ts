@@ -1,11 +1,30 @@
-import { Color3, LoadAssetContainerAsync, Mesh, TransformNode, Vector3, type Matrix, type PBRMaterial, type Scene } from './babylon';
+import { Color3, Color4, Plane, LoadAssetContainerAsync, Mesh, TransformNode, Vector3, type Matrix, type PBRMaterial, type Scene } from './babylon';
+import '@babylonjs/core/Rendering/edgesRenderer';
 import type { Library } from './library';
-import { box as boxGeo, compose, instanced, meshFrom, offsetLightness, pbr, rgb, shadows, translate } from './geometry';
+import {configureFacadeGlass} from './facade-glass';
+import {applyFacadePalette} from './facade-materials';
+import { box as boxGeo, compose, instanced, merge, meshFrom, offsetLightness, pbr, rgb, shadows, translate } from './geometry';
 import type { Building, TowerModel, UnitSlot, UnitStatus } from '../types';
 
 export const statusColor: Record<UnitStatus, number> = { AVAILABLE: 0x22a565, RESERVED: 0xf2a33a, SOLD: 0x9a95a6, BLOCKED: 0x6b6f78, UNAVAILABLE: 0x6b6f78 };
 export const defaultSlots: UnitSlot[] = Array.from({ length: 8 }, (_, i) => ({ final: String(i + 1).padStart(2, '0'), side: i < 4 ? 'back' : 'front', column: i % 4 }));
-const selectedColor = 0xe0622a;
+const selectedColor = 0xdf925d;
+// Paleta da maquete comercial, separada das cores mais saturadas do espelho de vendas.
+const volumeColor: Record<UnitStatus, number> = { AVAILABLE: 0x72a58d, RESERVED: 0xd5af69, SOLD: 0xa7a2b1, BLOCKED: 0x8f9399, UNAVAILABLE: 0x8f9399 };
+const floorColor:Record<UnitStatus,number>={AVAILABLE:0x7dab93,RESERVED:0xd0ab6a,SOLD:0xb1a9ba,BLOCKED:0x999ca2,UNAVAILABLE:0x999ca2};
+const quietVolume:Record<UnitStatus,number>={AVAILABLE:0xbad2c5,RESERVED:0xe8d6b4,SOLD:0xd3cdd8,BLOCKED:0xc8cccf,UNAVAILABLE:0xc8cccf};
+const quietFloor:Record<UnitStatus,number>={AVAILABLE:0xb5d0bf,RESERVED:0xe4cfaa,SOLD:0xd0cad6,BLOCKED:0xc8cccf,UNAVAILABLE:0xc8cccf};
+
+/** Arestas geometricas: continuam linhas solidas em WebGPU e WebGL, inclusive com antisserrilhado. */
+function envelope(w:number,height:number,d:number){
+  const t=.055,parts=[];
+  for(const x of [-w/2,w/2])for(const z of [-d/2,d/2])parts.push(translate(boxGeo(t,height,t),x,height/2,z));
+  for(const y of [0,height]){
+    for(const z of [-d/2,d/2])parts.push(translate(boxGeo(w,t,t),0,y,z));
+    for(const x of [-w/2,w/2])parts.push(translate(boxGeo(t,t,d),x,y,0));
+  }
+  return merge(parts);
+}
 
 export interface TowerObject {
   building: Building; group: TransformNode; top: Vector3; center: Vector3; height: number;
@@ -14,6 +33,8 @@ export interface TowerObject {
   setFloorHighlight(floor: number | null): void;
   setUnitsVisible(visible: boolean, floor?: number | null): void;
   setSelectedUnit(unitId: string | null): void;
+  /** Clareia torres de contexto sem transparencia ou mudanca dos status comerciais. */
+  setContextMuted(on:boolean):void;
   /** 0 = dia, 1 = pôr do sol: intensidade das janelas acesas. */
   setDusk(t: number): void;
   /** Realce alaranjado enquanto o mouse está sobre a torre. */
@@ -22,6 +43,26 @@ export interface TowerObject {
   unitTop(unitId: string): Vector3 | null;
   /** Resolve quando o modelo GLB da torre (se houver) terminou de carregar. */
   loaded: Promise<void>;
+  /** Volumes maciços (no espaço de `group`) que a câmera não atravessa: corpo e varandas, até a altura do recorte. */
+  solids(): SolidBox[];
+}
+
+/** Caixa alinhada aos eixos de um nó (mínimo e máximo locais). */
+export interface SolidBox { min: Vector3; max: Vector3 }
+
+/** Caixa das malhas no espaço do nó (os GLB têm nós próprios com escala e giro: converte pelos cantos no mundo). */
+function localBox(meshes: Mesh[], node: TransformNode): SolidBox | null {
+  if (!meshes.length) return null;
+  const inverse = node.computeWorldMatrix(true).clone().invert();
+  const min = new Vector3(Infinity, Infinity, Infinity), max = new Vector3(-Infinity, -Infinity, -Infinity);
+  for (const mesh of meshes) {
+    mesh.computeWorldMatrix(true);
+    for (const corner of mesh.getBoundingInfo().boundingBox.vectorsWorld) {
+      const p = Vector3.TransformCoordinates(corner, inverse);
+      min.minimizeInPlace(p); max.maximizeInPlace(p);
+    }
+  }
+  return { min, max };
 }
 
 /**
@@ -147,25 +188,44 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
   // Volumes por apartamento (ocultos até a seleção por andar) e faixas de pavimento.
   // Um material por cor/opacidade, compartilhado entre as unidades.
   const unitMaterials = new Map<string, PBRMaterial>();
-  const unitMaterial = (color: number, alpha: number) => {
-    const key = `${color}|${alpha}`;
-    if (!unitMaterials.has(key)) unitMaterials.set(key, pbr(scene, `${id}-unit-${key}`, { color, roughness: 0.7, alpha, depthWrite: alpha >= 1 }));
+  const unitMaterial = (color: number, alpha: number,unlit=false) => {
+    const key = `${color}|${alpha}|${unlit}`;
+    if (!unitMaterials.has(key)) {
+      const material=pbr(scene, `${id}-unit-${key}`, { color, roughness: 1, alpha, depthWrite: alpha >= 1,unlit });
+      // Sem reflexo de ceu branco sobre a cor comercial: mantem a leitura de verde/laranja.
+      material.environmentIntensity=.18;material.directIntensity=.78;material.specularIntensity=0;
+      unitMaterials.set(key,material);
+    }
     return unitMaterials.get(key)!;
   };
   const unitMeshes = new Map<string, Mesh>();
+  const unitOutlines = new Map<string, Mesh>();
+  const unitTops=new Map<string,Mesh>();
   const unitFloor = new Map<string, number>();
-  const colW = W / columns;
-  const unitGeometry = boxGeo(colW - 0.5, h - 0.25, D / 2 - 0.4);
+  const colW = (W-coreW) / columns;
+  const unitGeometry = boxGeo(colW - 0.12, h - 0.06, D / 2 - 0.2);
+  const topGeometry=boxGeo(colW-.12,h-.054,D/2-.2,['py']);
+  const outlineMaterial=pbr(scene,`${id}-unit-outline`,{color:0xffffff,alpha:.6,depthWrite:false,unlit:true});
   const byFloorFinal = new Map(building.units.map((u) => [`${u.floor}|${u.final}`, u] as const));
   for (let f = 0; f < floors; f++) {
     for (const slot of slots) {
       const unit = byFloorFinal.get(`${f}|${slot.final}`); if (!unit) continue;
-      const mesh = meshFrom(`${id}-unit-${unit.number}`, unitGeometry, scene, unitMaterial(statusColor[unit.status], 0.82), group);
-      mesh.position.set(-W / 2 + colW * (slot.column + 0.5), f * h + h / 2, (slot.side === 'front' ? -1 : 1) * (D / 4));
-      mesh.scaling.setAll(1.04);
+      const mesh = meshFrom(`${id}-unit-${unit.number}`, unitGeometry, scene, unitMaterial(volumeColor[unit.status], .74), group);
+      const x=-W/2+colW*(slot.column+.5)+(slot.column>=columns/2?coreW:0);
+      mesh.position.set(x, f * h + h / 2, (slot.side === 'front' ? -1 : 1) * (D / 4));
+      mesh.scaling.setAll(1);
+      mesh.enableEdgesRendering();mesh.edgesWidth=.8;mesh.edgesColor=new Color4(1,1,1,.55);
       mesh.setEnabled(false);
       mesh.metadata = { unitId: unit.id, buildingId: building.id, floor: f };
       unitMeshes.set(unit.id, mesh); unitFloor.set(unit.id, f);
+      const top=meshFrom(`${id}-unit-floor-${unit.number}`,topGeometry,scene,unitMaterial(floorColor[unit.status],.9,true),mesh);
+      top.isPickable=false;unitTops.set(unit.id,top);
+      // Gabarito original acima do corte: somente arestas, nunca um segundo bloco preenchido.
+      const height=Math.max(h,H-f*h);
+      const outline=meshFrom(`${id}-unit-envelope-${unit.number}`,envelope(colW-.12,height,D/2-.2),scene,outlineMaterial,group);
+      outline.position.set(x,f*h,mesh.position.z);
+      outline.isPickable=false;outline.setEnabled(false);outline.metadata={unitEnvelope:true,floor:f,height};
+      unitOutlines.set(unit.id,outline);
     }
   }
   const bandMaterial = pbr(scene, `${id}-band`, { color: 0xf2a33a, alpha: 0.32, depthWrite: false, unlit: true });
@@ -176,16 +236,13 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
     return band;
   });
 
-  // Corpo recortado: mostra só os pavimentos abaixo do andar selecionado.
+  // Tampa horizontal do corte; a fachada real continua abaixo do pavimento selecionado.
   const cutBody = new TransformNode(`${id}-cut`, scene); cutBody.parent = group; cutBody.setEnabled(false);
-  const cutParts: Mesh[] = [];
-  for (const dir of [-1, 1]) for (const [geo, material] of [[sides, wall], [caps, plain]] as const) {
-    const wing = shadows(meshFrom(`${id}-cut-wing`, translate(geo, 0, 0.5, 0), scene, material, cutBody), true);
-    wing.position.x = dir * (coreW / 2 + wingW / 2); wing.scaling.set(wingW, 1, D);
-    cutParts.push(wing);
+  for (const dir of [-1, 1]) {
+    const wing = shadows(meshFrom(`${id}-cut-wing`, boxGeo(wingW,.035,D), scene, plain.clone(`${id}-cut-cap`), cutBody), false);
+    wing.position.x = dir * (coreW / 2 + wingW / 2);
   }
-  const cutCore = shadows(meshFrom(`${id}-cut-core`, translate(boxGeo(coreW, 1, D * 0.62), 0, 0.5, 0), scene, accent, cutBody), true);
-  cutParts.push(cutCore);
+  const cutCore = shadows(meshFrom(`${id}-cut-core`, boxGeo(coreW,.035,D*.62), scene, plain.clone(`${id}-cut-core-cap`), cutBody), false);
 
   // Caixa de clique da torre inteira (invisível, só para seleção).
   const hit = meshFrom(`${id}-hit`, boxGeo(W + 2, H + 4, D + 3), scene, null, group);
@@ -196,11 +253,30 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
   const center = Vector3.TransformCoordinates(new Vector3(0, H / 2, 0), world);
   const top = Vector3.TransformCoordinates(new Vector3(0, H + 6, 0), world);
   let selected: string | null = null; let unitsFloor: number | null | undefined; let dusk = 0;
+  // Torre paramétrica: o corpo centrado no nó, com a cobertura; o GLB troca pelas caixas do modelo.
+  let solidBoxes: SolidBox[] = [{ min: new Vector3(-W / 2, 0, -D / 2), max: new Vector3(W / 2, H + 3.5, D / 2) }];
+  const applyCut=()=>{
+    const cut=unitsFloor!=null, height=(unitsFloor??0)*h;
+    for(const mesh of body){mesh.setEnabled(!cut||height>0);const material=mesh.material as PBRMaterial|null;if(material)material.clipPlane=cut?new Plane(0,1,0,-height):null;}
+    cutBody.setEnabled(cut&&height>0);cutBody.position.y=height-.018;
+  };
   // Materiais do corpo que recebem o realce de hover (cor original guardada para voltar).
   const hoverTint = rgb(0xff8a3d);
   const tintable = new Map<PBRMaterial, Color3>();
   for (const material of [wall, plain, panelMaterial, trim, accent]) tintable.set(material, material.albedoColor.clone());
   const litMaterials: PBRMaterial[] = [litMaterial];
+  const interiorLights=new Set<PBRMaterial>(),interiorLitWalls=new Set<PBRMaterial>();
+  let contextMuted=false,hovered=false;
+  const bodyColors=new Map<PBRMaterial,Color3>();
+  const rememberBody=()=>{for(const mesh of body){const m=mesh.material as PBRMaterial|null;if(m?.albedoColor&&!bodyColors.has(m))bodyColors.set(m,m.albedoColor.clone());}};
+  rememberBody();
+  const contextTint=rgb(0xf2f4ef);
+  const applyBodyTone=()=>{
+    for(const [m,original] of bodyColors)Color3.LerpToRef(original,contextMuted?contextTint:hoverTint,contextMuted ? .56 : hovered&&tintable.has(m) ? .1 : 0,m.albedoColor);
+    for(const m of litMaterials)m.emissiveIntensity=dusk*1.6*(contextMuted ? .25 : 1);
+    for(const m of interiorLights)m.emissiveIntensity=(.05+dusk*1.8)*(contextMuted?.3:1);
+    for(const m of interiorLitWalls)m.emissiveIntensity=(.025+dusk*.35)*(contextMuted?.3:1);
+  };
 
   // Modelo detalhado do Blender (scripts/blender/build_tower.py): substitui o corpo paramétrico. Os volumes por
   // apartamento, as faixas de pavimento, a torre recortada e a caixa de clique continuam os daqui.
@@ -211,46 +287,70 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
     const root = container.rootNodes[0]; if (!root) return;
     root.parent = group;
     const visual = root.getChildMeshes(false).filter((m): m is Mesh => m instanceof Mesh && !m.isDisposed() && m.getTotalVertices() > 0);
+    const hasInteriors=visual.some(m=>/-interior-shell/.test(m.name));
     for (const mesh of visual) {
       shadows(mesh, true); mesh.isPickable = false;
       // Caixilhos, guarda-corpos e juntas somem ao longe (são finos demais para aparecer e custam muitos triângulos).
       if (/-(frames|rails|joints)/.test(mesh.name)) mesh.addLODLevel(420 * (library?.lodScale ?? 1), null);
+      if (/-interior-(furniture|curtains|lamps)/.test(mesh.name))mesh.addLODLevel(180*(library?.lodScale??1),null);
       const material = mesh.material as PBRMaterial | null; if (!material) continue;
       material.maxSimultaneousLights = 4;
-      if (material.name === 'VH_GlassLit') { material.emissiveColor = rgb(0xffc56a); material.emissiveIntensity = dusk * 1.6; if (!litMaterials.includes(material)) litMaterials.push(material); }
+      applyFacadePalette(material,model);
+      // Pintura lisa: o albedo "paint" tem manchas de ~1–2 m que, de perto, parecem sombra suja na fachada.
+      if (/^VH_(Wall|Tone\d+|Trim|Accent)$/.test(material.name) ) material.albedoTexture = null;
+      if (material.name === 'VH_GlassLit'&&!hasInteriors) { material.emissiveColor = rgb(0xffc56a); material.emissiveIntensity = dusk * 1.6; if (!litMaterials.includes(material)) litMaterials.push(material); }
+      if(/^VH_Interior/.test(material.name)){
+        material.environmentIntensity=.6;material.directIntensity=.72;material.emissiveColor=material.albedoColor.scale(.025);material.emissiveIntensity=1;
+        mesh.metadata={...mesh.metadata,windowInterior:true,castShadow:!/-interior-(furniture|curtains|lamps)/.test(mesh.name)};
+        if(material.name==='VH_InteriorLight'){material.emissiveColor=rgb(0xffe2ab);interiorLights.add(material);}
+        if(material.name==='VH_InteriorLit'){material.emissiveColor=rgb(0xffd8a1);interiorLitWalls.add(material);}
+      }
       if (/^VH_(Tone|Wall|Accent|Trim|Roof)/.test(material.name) && !tintable.has(material)) tintable.set(material, material.albedoColor.clone());
-      if (/^VH_Glass/.test(material.name)) material.environmentIntensity = 1.4; // vidro reflete o céu
+      if (/^VH_Glass/.test(material.name)) {
+        if(hasInteriors)configureFacadeGlass(material,mesh,model.facade?.glass);
+        else{material.environmentIntensity = 1.7;material.roughness = Math.max(material.roughness ?? 0.12, 0.12);}
+      }
     }
     for (const mesh of body) mesh.dispose();
     body.length = 0; body.push(...visual);
-    const showing = unitsFloor;
-    if (showing != null) for (const mesh of body) mesh.setEnabled(false);
+    // Volumes maciços do modelo: paredes/painéis (até a casa de máquinas) e o bloco das varandas.
+    const shell = localBox(visual.filter((m) => /-(body|panels|core|roof-equipment)/.test(m.name)), group);
+    const balcony = localBox(visual.filter((m) => /-balconies/.test(m.name)), group);
+    if (shell) solidBoxes = [shell, ...(balcony ? [balcony] : [])];
+    rememberBody();applyBodyTone();
+    applyCut();
   })().catch((error) => console.warn(`Modelo 3D da torre ${building.name} indisponível; usando o paramétrico`, error)) : Promise.resolve();
 
   return {
     building, group, top, center, height: H, unitMeshes, floorBands, pickables: [hit, ...unitMeshes.values()], loaded,
+    solids() {
+      // Com um andar recortado, só o que está abaixo dele é maciço (a câmera pode descer para ver os apartamentos).
+      const cut = unitsFloor != null ? unitsFloor * h : Infinity;
+      return solidBoxes.filter((b) => b.min.y < cut).map((b) => ({ min: b.min, max: new Vector3(b.max.x, Math.min(b.max.y, cut), b.max.z) }));
+    },
     setFloorHighlight(floor) { floorBands.forEach((band, i) => band.setEnabled(i === floor)); },
     setUnitsVisible(visible, floor) {
       unitsFloor = visible ? floor : undefined;
       // Com um andar selecionado, recorta a torre acima dele para mostrar os apartamentos (como uma maquete cortada).
-      const cut = visible && floor != null;
       for (const [unitId, mesh] of unitMeshes) mesh.setEnabled(visible && (floor == null || unitFloor.get(unitId) === floor));
-      for (const mesh of body) mesh.setEnabled(!cut);
-      cutBody.setEnabled(cut && floor! > 0);
-      if (cut && floor! > 0) for (const part of cutParts) part.scaling.y = floor! * h;
+      applyCut();
       this.setSelectedUnit(selected);
     },
-    setDusk(t) { dusk = t; for (const material of litMaterials) material.emissiveIntensity = t * 1.6; },
-    setHover(on) {
-      for (const [material, original] of tintable) Color3.LerpToRef(original, hoverTint, on ? 0.38 : 0, material.albedoColor);
-    },
+    setDusk(t) { dusk=t;applyBodyTone(); },
+    setHover(on) {hovered=on;applyBodyTone();},
+    setContextMuted(on){contextMuted=on;applyBodyTone();group.metadata={...group.metadata,contextMuted:on};},
     setSelectedUnit(unitId) {
       selected = unitId;
       for (const [uid, mesh] of unitMeshes) {
         const unit = building.units.find((u) => u.id === uid)!;
         const isSelected = uid === unitId;
-        mesh.material = isSelected ? unitMaterial(selectedColor, 1) : unitMaterial(statusColor[unit.status], unitsFloor != null ? 0.9 : 0.82);
-        mesh.scaling.setAll(isSelected ? 1.1 : 1.04);
+        const quiet=unitId!=null&&!isSelected;
+        mesh.material = isSelected ? unitMaterial(selectedColor, 1) : unitMaterial((quiet?quietVolume:volumeColor)[unit.status], unitsFloor != null ? (quiet ? .42 : .74) : .18);
+        const top=unitTops.get(uid)!;top.setEnabled(unitsFloor!=null);
+        top.material=isSelected?unitMaterial(0xe59a65,1,true):unitMaterial((quiet?quietFloor:floorColor)[unit.status],quiet ? .82 : .9,true);
+        mesh.scaling.setAll(1);
+        mesh.edgesColor=isSelected?new Color4(1,.95,.88,.9):new Color4(1,1,1,.55);mesh.edgesWidth=isSelected?1.1:.8;
+        unitOutlines.get(uid)!.setEnabled(unitsFloor!=null&&unitFloor.get(uid)===unitsFloor&&!isSelected);
       }
     },
     unitTop(unitId) {

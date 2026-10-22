@@ -6,6 +6,7 @@ export interface TowerModel {
   width: number; depth: number; elevators?: number; colors?: { facade?: string; accent?: string; roof?: string; base?: string }; unitSlots?: UnitSlot[];
   /** Modelo detalhado gerado no Blender e escolhido para o visualizador (asset público MODEL_3D). */
   glb?: { assetId: string; version?: number; generatedAt?: string } | null;
+  facade?: {tones?:string[];frame?:string;glass?:string;railing?:string;appearance?:'contrasted'};
 }
 
 export interface Unit { id: string; number: string; final: string | null; floor: number | null; status: UnitStatus; privateArea: number | null; totalArea: number | null; price: number | null; floorPlanId: string | null }
@@ -25,16 +26,26 @@ export interface PlanLayout {
   rooms: { id: string; name: string; kind: RoomKind; points: Point[] }[];
 }
 export interface Amenity { id: string; name: string; description: string | null; marker: number | null; position: { x: number; z: number } | null; mediaAssetIds: string[] }
+export type AmenityKind = 'pool' | 'court' | 'beach' | 'building' | 'kiosk' | 'playground' | 'deck' | 'bikes' | 'small' | 'gatehouse' | 'bar' | 'gourmet' | 'grills';
+export interface AmenityModelSpec { kind: AmenityKind; point: Point; width: number; depth: number; rotation?: number; water?: {point:Point;width:number;depth:number} }
 export interface SiteLayout {
   siteImageAssetId?: string; imageWidth: number; imageHeight: number; metersPerPixel: number; origin: Point; azimuth: number;
   lot?: Point[]; roads?: { name: string; points: Point[] }[]; showPrices?: boolean; notes?: string[];
   /** Raio (px) dos círculos numerados impressos na arte, apagados na textura. */
   markerRadius?: number;
+  /** Equipamentos conferidos no book. Coordenadas em pixels; dimensoes em metros. */
+  amenityModels?: Record<string,AmenityModelSpec>;
+  /** Aberturas do muro na divisa, no referencial em pixels da implantacao. */
+  entrances?: {a:Point;b:Point}[];
+  parkingExclusions?: Point[][];
   /** Chão do lote desenhado no painel: com ele o chão sai dos polígonos, sem dedução pela cor da arte. */
-  groundPlan?: { polygons: GroundPolygon[]; updatedAt?: string };
+  groundPlan?: { polygons: GroundPolygon[]; parkingRows?: ParkingRow[]; updatedAt?: string };
+  /** Paisagismo revisado sobre a implantacao, em vez de deduzido por cor de copa/sombra. */
+  landscape?: { version: 1; source?: string; trees: { kind: 'palm' | 'broadleaf'; point: Point; height: number }[] };
 }
 /** Polígono do chão em pixels da arte (o último vence na sobreposição); "art" mostra a imagem original. */
 export interface GroundPolygon { kind: 'asphalt' | 'grass' | 'paving' | 'art'; points: Point[] }
+export interface ParkingRow { a: Point; b: Point; curb: number; width?: number }
 export interface Development {
   id: string; slug: string; name: string; description: string | null; address: string | null; city: string | null; state: string | null;
   latitude: number | null; longitude: number | null; deliveryDate: string | null; coverAssetId: string | null;

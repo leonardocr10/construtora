@@ -1,11 +1,12 @@
 import {
-  ArcRotateCamera, CascadedShadowGenerator, Color3, Color4, DefaultRenderingPipeline, DirectionalLight, DynamicTexture, HemisphericLight,
-  ImageProcessingConfiguration, Layer, PBRMaterial, RawCubeTexture, Scene, SSAO2RenderingPipeline, Texture, Vector3, type AbstractEngine, type AbstractMesh,
-  type BaseTexture, type Mesh,
+  ArcRotateCamera, CascadedShadowGenerator, Color3, Color4, DefaultRenderingPipeline, DirectionalLight, HemisphericLight,
+  ImageProcessingConfiguration, Matrix, RawCubeTexture, Scene, SSAO2RenderingPipeline, Vector3, type AbstractEngine, type AbstractMesh, type TransformNode,
+  type BaseTexture,
 } from './babylon';
 import type { Library } from './library';
 import { createEngine, gpuName } from './engine';
-import { rgb, toSrgbBytes } from './geometry';
+import { rgb } from './geometry';
+import { Sky } from './sky';
 import { detectQuality, qualityLevels, savedQuality, saveQuality, type QualityLevel } from './quality';
 
 export type LightMode = 'day' | 'sunset';
@@ -24,14 +25,19 @@ const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t 
 /** Começa e termina devagar, com velocidade quase constante no meio (bom para trajetos longos). */
 const easeCruise = (t: number) => { const a = 0.18; if (t < a) return (t * t) / (2 * a * (1 - a)); if (t > 1 - a) return 1 - ((1 - t) * (1 - t)) / (2 * a * (1 - a)); return (t - a / 2) / (1 - a); };
 interface Label { element: HTMLElement; position: Vector3; minDistance?: number; maxDistance?: number }
+/** Volume que a câmera não atravessa: caixas no espaço de `node`. */
+interface Obstacle { node: TransformNode; boxes: () => { min: Vector3; max: Vector3 }[] }
+/** Folga entre a câmera e a fachada (para parar na janela, sem cortar o vidro com o plano próximo). */
+const obstacleMargin = 1.2;
 
 interface Palette { top: Color3; bottom: Color3; fog: Color3; sun: Color3; hemiSky: Color3; hemiGround: Color3; sunIntensity: number; hemiIntensity: number; elevation: number; azimuth: number; exposure: number; fogNear: number; fogFar: number }
 // Intensidades na escala física do Three (lux da direcional); a hemisférica do Babylon não divide por π, então leva 1/π.
 const palettes: Record<LightMode, Palette> = {
-  // Tarde clara: céu azul com horizonte enevoado e quente, sol a 42° com luz levemente dourada (sombras marcadas).
-  day: { top: rgb('#6fa6dc'), bottom: rgb('#f1e9da'), fog: rgb('#e9e2d4'), sun: rgb('#ffe9cc'), hemiSky: rgb('#d3e3f4'), hemiGround: rgb('#b5a88e'), sunIntensity: 2.7, hemiIntensity: 1.4 / Math.PI, elevation: 42, azimuth: 35, exposure: 1, fogNear: 650, fogFar: 2700 },
+  // Tarde clara: céu azul com horizonte enevoado e quente, sol a 25° (baixo o bastante para aparecer nas vistas; sombras longas).
+  // Sol mais forte que o ambiente: faces ao sol claras e faces na sombra mais fechadas, como numa foto; névoa só no horizonte.
+  day: { top: rgb('#4f8fd6'), bottom: rgb('#eeeae2'), fog: rgb('#e9e6dc'), sun: rgb('#fff1dc'), hemiSky: rgb('#e0eaf4'), hemiGround: rgb('#c1b9a9'), sunIntensity: 3.0, hemiIntensity: 1.5 / Math.PI, elevation: 25, azimuth: 35, exposure: 1.0, fogNear: 1200, fogFar: 4500 },
   // Fim de tarde: céu enevoado e quente, sol baixo a oeste, sombras longas e luz difusa reduzida.
-  sunset: { top: rgb('#b3a49d'), bottom: rgb('#e6c49c'), fog: rgb('#dcc0a0'), sun: rgb('#ffae6e'), hemiSky: rgb('#e6cdb6'), hemiGround: rgb('#8f7a69'), sunIntensity: 2.2, hemiIntensity: 1.15 / Math.PI, elevation: 14, azimuth: -72, exposure: 1.0, fogNear: 420, fogFar: 2800 },
+  sunset: { top: rgb('#8f9cb8'), bottom: rgb('#e6c49c'), fog: rgb('#dcc0a0'), sun: rgb('#ffae6e'), hemiSky: rgb('#e6cdb6'), hemiGround: rgb('#8f7a69'), sunIntensity: 2.2, hemiIntensity: 1.15 / Math.PI, elevation: 8, azimuth: -72, exposure: 1.0, fogNear: 420, fogFar: 2800 },
 };
 const transitionSeconds = 3.2;
 /** Giro do céu HDR (radianos) para o sol do céu coincidir com a luz direcional (ver build_library.py). */
@@ -60,16 +66,15 @@ export class World {
   private pipeline: DefaultRenderingPipeline | null = null;
   private ssao: SSAO2RenderingPipeline | null = null;
   private readonly labels: Label[] = [];
+  private readonly obstacles: Obstacle[] = [];
   private flight: Flight | null = null;
   private readonly tickers: ((dt: number) => void)[] = [];
   private readonly interactListeners: (() => void)[] = [];
-  private readonly sky: Layer;
-  private readonly skyCanvas = Object.assign(document.createElement('canvas'), { width: 2, height: 256 });
-  private readonly skyTexture: DynamicTexture;
+  private readonly sky: Sky;
   mode: LightMode = 'day';
   /** Biblioteca de assets (céu HDR, texturas, modelos); null sem ela (cena só com geometria gerada aqui). */
   library: Library | null = null;
-  private hdr: { day: BaseTexture; sunset: BaseTexture; skybox: Mesh } | null = null;
+  private hdr: { day: BaseTexture; sunset: BaseTexture } | null = null;
   /** Pausa a renderização (planta 3D aberta por cima). */
   paused = false;
 
@@ -90,14 +95,19 @@ export class World {
     const camera = this.camera;
     camera.fov = deg(38);
     camera.minZ = 1; camera.maxZ = 12000;
-    camera.lowerRadiusLimit = 25; camera.upperRadiusLimit = 2600;
-    camera.upperBetaLimit = deg(84);
+    // Aproximacao suficiente para inspecionar caixilhos, vidro e ambientes atras das janelas.
+    camera.lowerRadiusLimit = 4; camera.upperRadiusLimit = 2600;
+    // Até um pouco acima do horizonte (ver o céu e o sol baixo); o quadro impede a câmera de entrar no chão.
+    camera.upperBetaLimit = deg(96);
     camera.inertia = 0.85; camera.panningInertia = 0.85;
     camera.angularSensibilityX = camera.angularSensibilityY = 640;
     camera.wheelDeltaPercentage = 0.01; camera.pinchDeltaPercentage = 0.004;
     camera.mapPanning = true; // arrastar com o botão direito move no plano do chão
     camera.setPosition(new Vector3(260, 220, 300));
     camera.attachControl(false, false, 2);
+    // Travas depois do mouse/teclado (com a inércia) e antes de montar a vista: aplicadas no quadro seguinte, um
+    // arrasto forte chegava a mostrar a cidade por baixo do chão.
+    camera.onAfterCheckInputsObservable.add(() => { this.keepOutOfObstacles(); this.keepAboveGround(); });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     for (const type of ['pointerdown', 'wheel'] as const) canvas.addEventListener(type, () => { this.stopFlight(); for (const fn of this.interactListeners) fn(); }, { passive: true });
     camera.onProjectionMatrixChangedObservable.add(() => this.applyInset());
@@ -110,10 +120,7 @@ export class World {
     scene.environmentTexture = skyEnvironment(scene);
     scene.environmentIntensity = 0.55;
 
-    this.skyTexture = new DynamicTexture('sky', this.skyCanvas, scene, false);
-    this.sky = new Layer('sky', null, scene, true);
-    this.sky.texture = this.skyTexture;
-    this.sky.convertToLinearSpace = true; // o degradê é pintado em sRGB; o pipeline aplica tonemapping depois
+    this.sky = new Sky(scene);
 
     this.quality = savedQuality() ?? detectQuality(gpuName(engine));
     this.qualityChosen = savedQuality() != null;
@@ -152,6 +159,7 @@ export class World {
     shadow.bias = 0.0012;
     shadow.normalBias = 0.012;
     shadow.transparencyShadow = false;
+    shadow.darkness = 0.2; // sombra do sol nunca preta: a fachada na sombra continua clara
     this.shadow = shadow; this.shadowDirty = true;
 
     this.pipeline?.dispose(); this.pipeline = null;
@@ -159,7 +167,8 @@ export class World {
     if (q.ssao) {
       try {
         const ssao = new SSAO2RenderingPipeline('ssao', this.scene, { ssaoRatio: q.ssao.ratio, blurRatio: 1 }, [this.camera], true);
-        ssao.radius = 3.5; ssao.totalStrength = 1.1; ssao.base = 0.08; ssao.samples = q.ssao.samples;
+        // Oclusão só de contato (cantos e encontros): forte ou larga demais suja a cena inteira de cinza.
+        ssao.radius = 0.7; ssao.totalStrength = 0.45; ssao.base = 0.2; ssao.samples = q.ssao.samples;
         ssao.maxZ = 900; ssao.minZAspect = 0.5; ssao.expensiveBlur = q.ssao.samples >= 16; ssao.bilateralSoften = 0.05;
         this.ssao = ssao;
       } catch (error) { console.warn('SSAO indisponível', error); }
@@ -174,7 +183,7 @@ export class World {
     pipeline.imageProcessing.toneMappingEnabled = true;
     pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
     pipeline.imageProcessing.contrast = 1.12;
-    pipeline.imageProcessing.vignetteEnabled = true; pipeline.imageProcessing.vignetteWeight = 1.2; pipeline.imageProcessing.vignetteStretch = 0.4;
+    pipeline.imageProcessing.vignetteEnabled = true; pipeline.imageProcessing.vignetteWeight = 0.5; pipeline.imageProcessing.vignetteStretch = 0.4;
     pipeline.imageProcessing.exposure = this.current.exposure * acesExposure;
     this.pipeline = pipeline;
     if (this.scene.prePassRenderer) this.scene.prePassRenderer.samples = q.msaa;
@@ -192,12 +201,8 @@ export class World {
     const day = library.sky('day', q.envSize); const sunset = library.sky('sunset', q.envSize);
     if (day && sunset) {
       for (const texture of [day, sunset]) texture.rotationY = skyRotation;
-      const skybox = this.scene.createDefaultSkybox(day, true, 9000, 0, false)!;
-      // infiniteDistance falha com a cena em mão direita (a caixa cobre tudo): a caixa acompanha a câmera.
-      skybox.applyFog = false; skybox.isPickable = false; skybox.infiniteDistance = false;
-      this.scene.onBeforeRenderObservable.add(() => skybox.position.copyFrom(this.camera.position));
-      this.hdr = { day, sunset, skybox };
-      this.sky.dispose();
+      // O fundo visível é a cúpula de Sky (com o disco do sol); o HDR só ilumina e reflete.
+      this.hdr = { day, sunset };
       this.applyLighting();
     }
     let elapsed = 0;
@@ -237,35 +242,73 @@ export class World {
     const a = palettes.day; const b = palettes.sunset; const p = this.current;
     for (const key of ['top', 'bottom', 'fog', 'sun', 'hemiSky', 'hemiGround'] as const) Color3.LerpToRef(a[key], b[key], t, p[key]);
     for (const key of ['sunIntensity', 'hemiIntensity', 'elevation', 'azimuth', 'exposure', 'fogNear', 'fogFar'] as const) p[key] = a[key] + (b[key] - a[key]) * t;
-    const ctx = this.skyCanvas.getContext('2d')!;
-    const css = (c: Color3) => `rgb(${toSrgbBytes(c).join(',')})`;
-    const gradient = ctx.createLinearGradient(0, 0, 0, 256);
-    gradient.addColorStop(0, css(p.top)); gradient.addColorStop(0.62, css(p.bottom)); gradient.addColorStop(1, css(p.bottom));
-    ctx.fillStyle = gradient; ctx.fillRect(0, 0, 2, 256);
-    this.skyTexture.update(true);
     this.scene.fogColor.copyFrom(p.fog); this.scene.fogStart = p.fogNear; this.scene.fogEnd = p.fogFar;
     this.sun.diffuse.copyFrom(p.sun); this.sun.specular.copyFrom(p.sun); this.sun.intensity = p.sunIntensity;
     const el = deg(p.elevation); const az = deg(p.azimuth);
     this.sun.direction.set(-Math.sin(az) * Math.cos(el), -Math.sin(el), Math.cos(az) * Math.cos(el));
+    this.sky.update({ top: p.top, horizon: p.fog, sun: p.sun }, this.sun.direction);
     this.hemi.diffuse.copyFrom(p.hemiSky); this.hemi.groundColor.copyFrom(p.hemiGround); this.hemi.intensity = p.hemiIntensity;
     this.hemi.specular.set(0, 0, 0);
     if (this.hdr) {
       // Com o céu HDR a luz de ambiente vem dele: a hemisférica só completa a sombra.
-      this.hemi.intensity *= 0.3;
+      this.hemi.intensity *= 0.45;
       const env = t > 0.5 ? this.hdr.sunset : this.hdr.day;
-      if (this.scene.environmentTexture !== env) {
-        this.scene.environmentTexture = env;
-        const material = this.hdr.skybox.material as PBRMaterial;
-        const reflection = env.clone()!; reflection.coordinatesMode = Texture.SKYBOX_MODE;
-        material.reflectionTexture?.dispose(); material.reflectionTexture = reflection;
-      }
-      this.scene.environmentIntensity = 0.38 - 0.12 * t;
+      if (this.scene.environmentTexture !== env) this.scene.environmentTexture = env;
+      this.scene.environmentIntensity = 0.5 - 0.15 * t;
     }
     if (this.pipeline) this.pipeline.imageProcessing.exposure = p.exposure * acesExposure;
     for (const listener of this.duskListeners) listener(t);
   }
 
   // ——— câmera ———
+
+  /** Câmera nunca abaixo de 2 m: com o alvo baixo, inclinar para cima esbarra no chão e para (sem inércia). */
+  private keepAboveGround() {
+    const camera = this.camera, floorY = 2;
+    if (camera.target.y < 0) camera.target.y = 0;
+    if (camera.radius <= 0 || camera.target.y + camera.radius * Math.cos(camera.beta) >= floorY) return;
+    camera.beta = Math.acos(Math.max(-1, Math.min(1, (floorY - camera.target.y) / camera.radius)));
+    camera.inertialBetaOffset = 0;
+  }
+
+  /** Impede a câmera de entrar nas caixas (torres): a aproximação para na fachada. */
+  addObstacle(node: TransformNode, boxes: Obstacle['boxes']) { this.obstacles.push({ node, boxes }); }
+
+  /**
+   * Afasta a câmera de dentro dos obstáculos ao longo da linha alvo→câmera: com o alvo fora da torre ela para antes
+   * da fachada; com o alvo dentro (torre selecionada), para na fachada do lado de onde olha.
+   */
+  private keepOutOfObstacles() {
+    const camera = this.camera;
+    const inverse = new Matrix();
+    // Posição pelos ângulos e raio atuais: camera.position só é recalculada no render e ficaria um quadro atrasada.
+    const eyeWorld = () => camera.target.add(new Vector3(Math.cos(camera.alpha) * Math.sin(camera.beta), Math.cos(camera.beta), Math.sin(camera.alpha) * Math.sin(camera.beta)).scale(camera.radius));
+    for (const { node, boxes } of this.obstacles) {
+      if (!node.isEnabled()) continue;
+      node.computeWorldMatrix(true).invertToRef(inverse);
+      const target = Vector3.TransformCoordinates(camera.target, inverse);
+      for (const box of boxes()) {
+        const eye = Vector3.TransformCoordinates(eyeWorld(), inverse);
+        const m = obstacleMargin;
+        const min = box.min.subtractFromFloats(m, m, m), max = box.max.add(new Vector3(m, m, m));
+        const inside = (p: Vector3) => p.x > min.x && p.x < max.x && p.y > min.y && p.y < max.y && p.z > min.z && p.z < max.z;
+        if (!inside(eye)) continue;
+        // Interseção do segmento alvo (s = 0) → câmera (s = 1) com a caixa (método das placas).
+        let enter = -Infinity, exit = Infinity;
+        for (const axis of ['x', 'y', 'z'] as const) {
+          const d = eye[axis] - target[axis];
+          if (Math.abs(d) < 1e-9) continue;
+          const a = (min[axis] - target[axis]) / d, b = (max[axis] - target[axis]) / d;
+          enter = Math.max(enter, Math.min(a, b)); exit = Math.min(exit, Math.max(a, b));
+        }
+        // Alvo dentro: a saída fica além da câmera (s > 1, afasta). Alvo fora: a entrada fica antes (s < 1, aproxima).
+        const s = inside(target) ? exit : enter;
+        if (!Number.isFinite(s) || s <= 0) continue;
+        camera.radius *= s;
+        camera.inertialRadiusOffset = 0;
+      }
+    }
+  }
 
   onTick(fn: (dt: number) => void) { this.tickers.push(fn); }
   /** O visitante mexeu na câmera (arrastar, roda): interrompe o tour. */

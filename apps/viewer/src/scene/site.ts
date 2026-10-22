@@ -3,7 +3,7 @@ import type { Library } from './library';
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
 import { buildCars, detectCars, lotBase } from './lot-relief';
-import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, Ground, manualAt, paintGround, planGround, settleStalls, type Footprint, type GroundMap } from './ground';
+import { asphaltLevel, buildGroundMesh, classifyGround, curbHeight, Ground, paintGround, planGround, settleStalls, surfaceFits, type Footprint, type GroundMap } from './ground';
 import { buildAmenities } from './amenities';
 import { buildVectorGround } from './ground-vector';
 import { buildPlanGround } from './ground-plan';
@@ -12,6 +12,19 @@ import { buildPalms, buildTrees } from './trees';
 import { box, compose, merge, meshFrom, pbr, polygon, prism, shadows, transform, type Geo } from './geometry';
 
 /** Converte pixels da implantação para metros no referencial do terreno (antes da rotação do azimute). */
+/** Retângulo girado no plano do terreno (metros): centro, ângulo do eixo x local e meias-dimensões. */
+interface Rect { x: number; z: number; angle: number; hx: number; hz: number }
+
+/** Os dois retângulos se sobrepõem? (teorema dos eixos separadores: testa os eixos de ambos). */
+function rectsOverlap(a: Rect, b: Rect) {
+  const axes = [a.angle, a.angle + Math.PI / 2, b.angle, b.angle + Math.PI / 2];
+  const reach = (r: Rect, ax: number, az: number) => Math.abs(Math.cos(r.angle) * ax + Math.sin(r.angle) * az) * r.hx + Math.abs(-Math.sin(r.angle) * ax + Math.cos(r.angle) * az) * r.hz;
+  return axes.every((t) => {
+    const ax = Math.cos(t), az = Math.sin(t);
+    return Math.abs((b.x - a.x) * ax + (b.z - a.z) * az) <= reach(a, ax, az) + reach(b, ax, az);
+  });
+}
+
 export function pixelToSite(layout: SiteLayout, [px, py]: Point): Point {
   return [(px - layout.origin[0]) * layout.metersPerPixel, (py - layout.origin[1]) * layout.metersPerPixel];
 }
@@ -120,12 +133,14 @@ function borderPalms(lot: Point[], ground: GroundMap, metersPerPixel: number, tr
 }
 
 /** Muro baixo no contorno do lote, como nas maquetes de vendas. */
-function buildWall(scene: Scene, parent: TransformNode, lot: Point[]) {
+function buildWall(scene: Scene, parent: TransformNode, lot: Point[], entrances:{a:Point;b:Point}[]=[]) {
   const parts: Geo[] = [];
   for (let i = 0; i < lot.length; i++) {
     const [ax, az] = lot[i]; const [bx, bz] = lot[(i + 1) % lot.length];
     const length = Math.hypot(bx - ax, bz - az); if (length < 0.5) continue;
-    parts.push(transform(box(length, 1.6, 0.22), compose((ax + bx) / 2, 0.8, (az + bz) / 2, 0, -Math.atan2(bz - az, bx - ax), 0)));
+    const ux=(bx-ax)/length,uz=(bz-az)/length;
+    const gaps=entrances.map(e=>{const project=(p:Point)=>(p[0]-ax)*ux+(p[1]-az)*uz;const near=(p:Point)=>Math.abs((p[0]-ax)*uz-(p[1]-az)*ux)<.5;return near(e.a)&&near(e.b)?[Math.max(0,Math.min(project(e.a),project(e.b))),Math.min(length,Math.max(project(e.a),project(e.b)))]:null;}).filter((g):g is number[]=>!!g&&g[1]>g[0]).sort((a,b)=>a[0]-b[0]);
+    let cursor=0;for(const [start,end] of [...gaps,[length,length]]){if(start>cursor){const mid=(start+cursor)/2;parts.push(transform(box(start-cursor,1.6,.22),compose(ax+ux*mid,.8,az+uz*mid,0,-Math.atan2(bz-az,bx-ax),0)));}cursor=Math.max(cursor,end);}
   }
   return shadows(meshFrom('lot-wall', merge(parts), scene, pbr(scene, 'lot-wall', { color: 0xe9e7e1, roughness: 0.9 }), parent), true);
 }
@@ -176,25 +191,40 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
         const plan = layout.groundPlan?.polygons.length ? layout.groundPlan.polygons : null;
         const ground = plan ? planGround(layout.lot!, plan, canvas.width, canvas.height) : classifyGround(canvas, layout.lot!, layout.metersPerPixel, [], erased, towerFootprints, original);
         // Fileiras de vagas encostadas no meio-fio, completas, e ocupadas conforme a arte.
-        const parking = planParking(detected, ground, original, layout.metersPerPixel);
+        const parking = planParking(detected, ground, original, layout.metersPerPixel, layout.groundPlan?.parkingRows);
         // Vaga cujo centro foi desenhado no painel como outra coisa que não asfalto sai (com o carro).
-        parking.stalls = parking.stalls.filter((stall) => { const k = manualAt(ground, stall.x, stall.y); return !k || k === Ground.Asphalt; });
+        parking.stalls = parking.stalls.filter((stall) => (!plan || surfaceFits(ground, stall.x, stall.y, stall.angle, 4.8 / layout.metersPerPixel, (stall.width - 0.15) / layout.metersPerPixel, Ground.Asphalt))&&!(layout.parkingExclusions??[]).some(p=>insidePolygon([stall.x,stall.y],p)));
         settleStalls(ground, parking.stalls, layout.metersPerPixel);
         const painted = paintGround(canvas, ground, layout.metersPerPixel, parking.stalls);
         // Áreas de lazer em 3D, a partir do nome e da arte em volta de cada marcador.
-        buildAmenities(scene, group, canvas, layout.lot!, development.amenities, layout.metersPerPixel, layout.origin, (p) => pixelToSite(layout, p), asphaltLevel + curbHeight);
-        // Um carro em cada vaga ocupada, no centro dela, com a frente para o meio-fio (ou de ré).
+        buildAmenities(scene, group, canvas, layout.lot!, development.amenities, layout.metersPerPixel, layout.origin, (p) => pixelToSite(layout, p), asphaltLevel + curbHeight,layout.amenityModels);
+        // Volumes das torres no chão (corpo e bloco das varandas, com folga): carro nenhum pode ocupar esse espaço.
+        const towerRects: Rect[] = development.buildings.filter((b) => b.position).flatMap((b) => {
+          const w = b.model3d?.width ?? 30, d = b.model3d?.depth ?? 16, angle = ((b.position!.rotation ?? 0) * Math.PI) / 180;
+          const balconies = (b.model3d?.facade as { balconies?: { enabled?: boolean; projection?: number } } | undefined)?.balconies;
+          const rects: Rect[] = [{ x: b.position!.x, z: b.position!.z, angle, hx: w / 2 + 0.4, hz: d / 2 + 0.4 }];
+          if (balconies?.enabled !== false) rects.push({ x: b.position!.x, z: b.position!.z, angle, hx: w * 0.13 + 0.4, hz: d / 2 + (balconies?.projection ?? 1.3) + 0.4 });
+          return rects;
+        });
+        // Um carro em cada vaga ocupada, no centro dela, com a frente para o meio-fio (ou de ré); a vaga que encosta
+        // numa torre (arte e torre não batem exatamente) fica vazia em vez de pôr o carro dentro do prédio.
         const cars = parking.stalls.filter((stall) => stall.car).map((stall) => {
           const [x, z] = pixelToSite(layout, [stall.x, stall.y]);
           const nose = (stall.curb || 1) * (stall.car!.reversed ? -1 : 1);
           return { x, z, angle: stall.angle + (nose < 0 ? Math.PI : 0), color: stall.car!.color, kind: stall.car!.kind, seed: stall.x * 7 + stall.y * 13 };
-        });
-        const meshes = buildGroundMesh(ground, (p) => pixelToSite(layout, p), { u: (px) => (px - ground.x0) / ground.w, v: (py) => 1 - (py - ground.y0) / ground.h });
+        }).filter((car) => !towerRects.some((tower) => rectsOverlap({ x: car.x, z: car.z, angle: car.angle, hx: 2.45, hz: 1.0 }, tower)));
         const footprints = development.buildings.filter((b) => b.position).map((b) => ({ x: b.position!.x / layout.metersPerPixel + layout.origin[0], y: b.position!.z / layout.metersPerPixel + layout.origin[1], r: Math.hypot(b.model3d?.width ?? 30, b.model3d?.depth ?? 16) / 2 / layout.metersPerPixel + 4 }));
-        const trees = detectTrees(canvas, layout.lot!, footprints, layout.metersPerPixel);
+        const plantingFits = (p: Point, clearance = 0.65) => surfaceFits(ground, p[0], p[1], 0, clearance * 2 / layout.metersPerPixel, clearance * 2 / layout.metersPerPixel, Ground.Grass);
+        const reviewedTrees = layout.landscape?.trees.filter((t) => plantingFits(t.point));
+        const trees: [number, number, number][] = reviewedTrees
+          ? reviewedTrees.filter((t) => t.kind === 'broadleaf').map((t) => [...t.point, t.height / 1.7])
+          : detectTrees(canvas, layout.lot!, footprints, layout.metersPerPixel).filter(([x, y]) => plantingFits([x, y]));
         const place = (list: typeof trees) => list.map(([px, py, size]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, size] as [number, number, number]; });
         // Palmeiras em fileira nas faixas de grama junto ao muro (paisagismo típico), longe das árvores.
-        const palms = borderPalms(layout.lot!, ground, layout.metersPerPixel, trees).map(([px, py]) => { const [x, z] = pixelToSite(layout, [px, py]); return [x, z, 3] as [number, number, number]; });
+        const palmPixels: [number, number, number][] = reviewedTrees
+          ? reviewedTrees.filter((t) => t.kind === 'palm').map((t) => [...t.point, t.height])
+          : borderPalms(layout.lot!, ground, layout.metersPerPixel, trees).map(([x,y]) => [x,y,8.5]);
+        const palms = place(palmPixels);
         lotMesh.dispose();
 
         if (library) {
@@ -244,12 +274,29 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
             const s = (size * 1.7) / 6.6 * (0.9 + random() * 0.25);
             return { matrix: compose(x, asphaltLevel + curbHeight, z, 0, random() * Math.PI * 2, 0, s, s * (0.9 + random() * 0.2), s) };
           }), { parent: group, chunk: 120, lodDistance: 170, cull: 1600 }));
-          if (palms.length) tasks.push(library.instances('tree_palm', palms.map(([x, z]) => {
-            const s = (8.5 + random() * 2.5) / 9;
+          if (palms.length) tasks.push(library.instances('tree_palm', palms.map(([x, z, height]) => {
+            const s = height / 9 * (0.96 + random() * 0.08);
             return { matrix: compose(x, asphaltLevel + curbHeight, z, 0, random() * Math.PI * 2, 0, s, s, s) };
           }), { parent: group, chunk: 120, lodDistance: 170, cull: 1600 }));
+          // Forracao baixa na borda dos canteiros. A base inteira precisa caber na grama.
+          if (plan && library.has('shrub')) {
+            const shrubs: { matrix: ReturnType<typeof compose> }[] = [];
+            const spacing = 1.55 / layout.metersPerPixel;
+            for (let py = ground.y0 + spacing / 2; py < ground.y0 + ground.h; py += spacing) {
+              for (let px = ground.x0 + spacing / 2; px < ground.x0 + ground.w; px += spacing) {
+                if (!plantingFits([px,py], 0.5)) continue;
+                // Apenas bordaduras; centros dos gramados ficam livres.
+                const edge = !plantingFits([px,py], 1.55);
+                if (!edge || [...trees,...palmPixels].some(([tx,ty]) => Math.hypot(tx-px,ty-py) * layout.metersPerPixel < 1.35)) continue;
+                const [x,z] = pixelToSite(layout,[px,py]); const s = 0.38 + random() * 0.22;
+                shrubs.push({matrix:compose(x,asphaltLevel+curbHeight,z,0,random()*Math.PI*2,0,s,s*0.8,s)});
+              }
+            }
+            tasks.push(library.instances('shrub',shrubs,{parent:group,chunk:80,lodDistance:80,cull:500,shadowLevels:1}));
+          }
           readyTasks.push(Promise.all(tasks).catch((error) => console.warn('Modelos da biblioteca indisponíveis', error)));
         } else {
+          const meshes = buildGroundMesh(ground, (p) => pixelToSite(layout, p), { u: (px) => (px - ground.x0) / ground.w, v: (py) => 1 - (py - ground.y0) / ground.h });
           buildCars(scene, group, cars);
           const texture = new DynamicTexture('lot-art', painted.canvas, scene, true);
           texture.anisotropicFilteringLevel = 16;
@@ -258,7 +305,7 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
           lotMesh = shadows(meshFrom('lot', meshes.top, scene, groundMaterial, group), false);
           shadows(meshFrom('lot-curbs', meshes.side, scene, pbr(scene, 'curb', { color: 0xd4d1c8, roughness: 0.9, doubleSided: true }), group), false);
           if (trees.length) buildTrees(scene, group, place(trees));
-          if (palms.length) buildPalms(scene, group, palms);
+          if (palms.length) buildPalms(scene, group, palms.map(([x,z,height]) => [x,z,Math.max(0.5,(height-6)/1.2)]));
         }
         resolveSite();
       };
@@ -267,7 +314,7 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
     }
     // Meio-fio em volta do lote.
     shadows(meshFrom('lot-edge', prism(lot, 0, 0.16), scene, pbr(scene, 'lot-edge', { color: 0xd9d6cc, roughness: 1 }), group), false);
-    buildWall(scene, group, lot);
+    buildWall(scene, group, lot,(layout.entrances??[]).map(e=>({a:pixelToSite(layout,e.a),b:pixelToSite(layout,e.b)})));
   }
 
   if (!layout?.lot?.length || !siteImageUrl) resolveSite();

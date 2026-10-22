@@ -30,7 +30,7 @@ import re
 import sys
 
 GENERATOR = "vistahub-build-tower"
-GENERATOR_VERSION = 2
+GENERATOR_VERSION = 3
 
 DEFAULT_COLORS = {"facade": "#e6ebe8", "accent": "#e0622a", "roof": "#d8dbd6", "base": "#c9ccc6"}
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -368,6 +368,13 @@ def build_geometry(p):
         "frames": MeshData("frames", ["VH_Frame"]),
         "glass": MeshData("glass", ["VH_Glass"]),
         "glass-lit": MeshData("glass-lit", ["VH_GlassLit"]),
+        "glass-soft": MeshData("glass-soft", ["VH_GlassSoft"]),
+        "glass-warm": MeshData("glass-warm", ["VH_GlassWarm"]),
+        "glass-frost": MeshData("glass-frost", ["VH_GlassFrost"]),
+        "interior-shell": MeshData("interior-shell", ["VH_InteriorWall", "VH_InteriorFloor", "VH_InteriorLit"]),
+        "interior-furniture": MeshData("interior-furniture", ["VH_InteriorIvory", "VH_InteriorSage", "VH_InteriorDark", "VH_InteriorStone"]),
+        "interior-curtains": MeshData("interior-curtains", ["VH_InteriorFabric"]),
+        "interior-lamps": MeshData("interior-lamps", ["VH_InteriorLight"]),
         "core": MeshData("core", ["VH_Accent", "VH_CoreVoid"]),
         "balconies": MeshData("balconies", ["VH_Accent", "VH_Trim"]),
         "rails": MeshData("rails", ["VH_Rail"]),
@@ -381,6 +388,59 @@ def build_geometry(p):
     small = min(fac["smallWindow"], h - 1.2)
     bal = fac["balconies"]
     door_w, door_h = min(bal["width"] - 0.3, 2.0), min(2.2, h - 0.45)
+    m["interior-shell"].room_count = 0
+
+    def room(face, wu, wy, ww, wh, lit):
+        """Ambiente 3D ilustrativo atras do vao, fechado entre pisos e sem fundo colado ao vidro.
+
+        Nao e a planta executiva do apartamento: o passeio interno usa o layout cadastrado.
+        A casca fica sempre presente; apenas o mobiliario pequeno recebe LOD no visualizador.
+        """
+        base = math.floor(wy / h) * h
+        rw, depth = ww + 0.55, 2.3
+        shell, furniture = m["interior-shell"], m["interior-furniture"]
+        shell.room_count += 1
+        wall_mat = 2 if lit else 0
+        face.rect(shell, wu-rw/2, wu+rw/2, base+.14, base+h-.12, -depth, mat=wall_mat)
+        face.box(shell, wu, base+.15, -depth/2, rw, .12, depth, mat=1)
+        face.box(shell, wu, base+h-.10, -depth/2, rw, .12, depth)
+        for side in (-1, 1):
+            face.box(shell, wu+side*rw/2, base+h/2, -depth/2, .08, h-.2, depth)
+        if ww <= .75:  # banheiro: bancada e espelho vistos atraves do vidro fosco
+            face.box(furniture, wu, base+.65, -1.92, rw-.18, .75, .48)
+            face.box(furniture, wu, base+1.05, -1.92, rw-.12, .07, .54, mat=3)
+            face.box(furniture, wu, base+1.68, -depth+.025, rw*.68, .74, .035, mat=2)
+            return
+        variant = int(random()*3) if wh < 1.8 else 0
+        if variant == 0:  # sala: sofa claro, almofadas, mesa de pedra e painel de TV
+            face.box(furniture, wu, base+.44, -1.75, rw-.25, .48, .75)
+            face.box(furniture, wu, base+.88, -2.12, rw-.25, .70, .16)
+            for side in (-1, 1):
+                face.box(furniture, wu+side*(rw/2-.2), base+.66, -1.75, .18, .38, .75)
+                face.box(furniture, wu+side*rw*.2, base+.8, -1.98, rw*.22, .34, .14, mat=1)
+            face.box(furniture, wu, base+.46, -.83, rw*.55, .10, .5, mat=3)
+            face.box(furniture, wu, base+.3, -.83, .10, .25, .12, mat=2)
+            # Quadro acima do sofa (o fundo continua sendo um comodo, nao uma imagem de interior).
+            face.box(furniture, wu, base+1.75, -depth+.025, rw*.55, .52, .035, mat=1)
+        elif variant == 1:  # quarto: cama estofada, cabeceira e roupa de cama sage
+            bw = min(1.4, rw-.24)
+            face.box(furniture, wu, base+.38, -1.28, bw, .3, 1.65, mat=2)
+            face.box(furniture, wu, base+.60, -1.28, bw, .16, 1.65)
+            face.box(furniture, wu, base+.71, -1.06, bw+.02, .06, 1.1, mat=1)
+            face.box(furniture, wu, base+.95, -2.12, bw+.08, 1.0, .10)
+            for side in (-1, 1):
+                face.box(furniture, wu+side*bw*.23, base+.73, -1.9, bw*.38, .12, .3)
+            face.box(furniture, wu, base+1.85, -depth+.03, bw*.6, .5, .04, mat=3)
+        else:  # cozinha: armarios foscos, bancada e divisao dos modulos
+            face.box(furniture, wu, base+.6, -1.95, rw-.16, .8, .52, mat=1)
+            face.box(furniture, wu, base+1.04, -1.94, rw-.1, .08, .57, mat=3)
+            face.box(furniture, wu, base+1.98, -2.05, rw-.16, .7, .33)
+            for side in (-1, 1):
+                face.box(furniture, wu+side*rw*.2, base+1.82, -1.87, .16, .025, .02, mat=2)
+        # Cortinas laterais estreitas: deixam o centro da janela livre para ver a profundidade.
+        for side in (-1, 1):
+            face.box(m["interior-curtains"], wu+side*(ww/2-.06), base+1.5, -.18, .15, min(2.25,h-.4), .09)
+        face.box(m["interior-lamps"], wu, base+h-.19, -1.35, .32, .055, .32)
 
     def window(face, wu, wy, ww, wh, lit_chance, holes, items):
         holes.append((wu - (ww + 0.14) / 2, wu + (ww + 0.14) / 2, wy - (wh + 0.14) / 2, wy + (wh + 0.14) / 2))
@@ -424,7 +484,18 @@ def build_geometry(p):
                     # Peitoril: pinga-água saindo além do painel.
                     face.box(m["trim"], wu, wy - oh / 2 - 0.03, (PANEL_T + 0.06) / 2, ow + 0.12, 0.06, PANEL_T + 0.06)
                 target = m["glass-lit"] if lit and random() < lit else m["glass"]
+                # Variacao estavel por apartamento: persiana clara/reflexo quente, sem
+                # transformar todas as janelas em retangulos pretos identicos.
+                if target is m["glass"] and wh < 2:
+                    shade = random()
+                    if shade < 0.22:
+                        target = m["glass-soft"]
+                    elif shade < 0.34:
+                        target = m["glass-warm"]
+                if ww <= .75:
+                    target = m["glass-frost"]
                 face.rect(target, wu - ww / 2, wu + ww / 2, wy - wh / 2, wy + wh / 2, GLASS_OUT)
+                room(face, wu, wy, ww, wh, target is m["glass-lit"])
 
     def balconies(face, length, cells, balcony_cell, face_sign):
         """Varandas em balanço na faixa junto ao núcleo: laje e abas na cor de destaque, guarda-corpo metálico."""
@@ -455,8 +526,10 @@ def build_geometry(p):
 
     for d in (-1, 1):
         cx = d * (core_w / 2 + wing_w / 2)
-        # Lâmina: alvenaria com a cobertura no material de laje.
-        m["body"].box(cx, H / 2, 0, wing_w, H, D, mat=0, top_mat=1, bottom=False)
+        # Lajes e parede junto ao nucleo, sem a caixa macica que tampava os vaos da fachada.
+        for floor in range(floors+1):
+            m["body"].box(cx, floor*h+.045, 0, wing_w, .09, D, mat=1)
+        m["body"].box(cx-d*(wing_w/2-.06), H/2, 0, .12, H, D, mat=0)
         # Tom 0 nas células das pontas da lâmina e nas empenas; tom 1 nas células junto ao núcleo.
         outer_cell = 0 if d < 0 else cells_per_wing - 1
         core_cell = cells_per_wing - 1 if d < 0 else 0
@@ -470,9 +543,9 @@ def build_geometry(p):
             # Junta de dilatação entre pavimentos: frisos rasos (2 cm) em volta da lâmina.
             for f in range(1, floors + 1):
                 y = f * h - 0.02
-                m["joints"].box(cx, y, D / 2 + PANEL_T + 0.01, wing_w + 2 * PANEL_T, 0.035, 0.02)
-                m["joints"].box(cx, y, -D / 2 - PANEL_T - 0.01, wing_w + 2 * PANEL_T, 0.035, 0.02)
-                m["joints"].box(cx + d * (wing_w / 2 + PANEL_T + 0.01), y, 0, 0.02, 0.035, D + 2 * PANEL_T)
+                m["joints"].box(cx, y, D / 2 + PANEL_T + 0.004, wing_w + 2 * PANEL_T, 0.014, 0.008)
+                m["joints"].box(cx, y, -D / 2 - PANEL_T - 0.004, wing_w + 2 * PANEL_T, 0.014, 0.008)
+                m["joints"].box(cx + d * (wing_w / 2 + PANEL_T + 0.004), y, 0, 0.008, 0.014, D + 2 * PANEL_T)
         # Platibanda: quatro paredes de 15 cm e rufo por cima.
         ox, oz = wing_w / 2 + 0.15, D / 2 + 0.15
         for sz in (-1, 1):
@@ -547,10 +620,22 @@ def material_specs(colors, facade=None):
         "VH_Wall": {"color": wall, "roughness": 0.9, "texture": "paint"},
         "VH_Roof": {"color": srgb_to_linear(colors["roof"]), "roughness": 0.95, "texture": "concrete"},
         "VH_Trim": {"color": srgb_to_linear(lighten_hex(facade["tones"][0], 0.05)), "roughness": 0.8, "texture": "paint"},
-        "VH_Joint": {"color": tuple(c * 0.62 for c in srgb_to_linear(facade["tones"][0])), "roughness": 0.9},
+        "VH_Joint": {"color": tuple(c * 0.88 for c in srgb_to_linear(facade["tones"][0])), "roughness": 0.9},
         "VH_Frame": {"color": srgb_to_linear(facade["frame"]), "roughness": 0.4, "metallic": 0.5, "texture": "metal"},
-        "VH_Glass": {"color": srgb_to_linear(facade["glass"]), "roughness": 0.04, "metallic": 0.35},
-        "VH_GlassLit": {"color": srgb_to_linear(facade["glass"]), "roughness": 0.04, "metallic": 0.35, "emission": srgb_to_linear("#ffc56a")},
+        "VH_Glass": {"color": srgb_to_linear(facade["glass"]), "roughness": .16, "metallic": 0.0, "alpha": .78},
+        "VH_GlassLit": {"color": srgb_to_linear("#375047"), "roughness": .16, "metallic": 0.0, "alpha": .72},
+        "VH_GlassSoft": {"color": srgb_to_linear("#597467"), "roughness": .24, "metallic": 0.0, "alpha": .84},
+        "VH_GlassWarm": {"color": srgb_to_linear("#625f50"), "roughness": .16, "metallic": 0.0, "alpha": .78},
+        "VH_GlassFrost": {"color": srgb_to_linear("#8b9b8e"), "roughness": .48, "metallic": 0.0, "alpha": .90},
+        "VH_InteriorWall": {"color": srgb_to_linear("#d9d5ca"), "roughness": .95},
+        "VH_InteriorLit": {"color": srgb_to_linear("#e1d8c5"), "roughness": .95},
+        "VH_InteriorFloor": {"color": srgb_to_linear("#b6aa94"), "roughness": .9},
+        "VH_InteriorIvory": {"color": srgb_to_linear("#e5e2d7"), "roughness": .87},
+        "VH_InteriorSage": {"color": srgb_to_linear("#7f9587"), "roughness": .85},
+        "VH_InteriorDark": {"color": srgb_to_linear("#454b49"), "roughness": .7},
+        "VH_InteriorStone": {"color": srgb_to_linear("#c9c5b8"), "roughness": .7},
+        "VH_InteriorFabric": {"color": srgb_to_linear("#e7e2d6"), "roughness": 1.0},
+        "VH_InteriorLight": {"color": srgb_to_linear("#fff2d5"), "roughness": .8},
         "VH_Accent": {"color": accent, "roughness": 0.8, "texture": "paint"},
         "VH_CoreVoid": {"color": tuple(c * 0.3 for c in accent), "roughness": 1.0},
         "VH_Rail": {"color": srgb_to_linear(facade["railing"]), "roughness": 0.45, "metallic": 0.85, "texture": "metal"},
@@ -650,6 +735,8 @@ def build_scene(p):
             bsdf.inputs["Alpha"].default_value = spec["alpha"]
             if hasattr(mat, "surface_render_method"):
                 mat.surface_render_method = "BLENDED"
+        if name.startswith("VH_Glass"):
+            mat.use_backface_culling = False
         mat.diffuse_color = (*spec["color"], spec.get("alpha", 1.0))
         if textures and spec.get("texture"):
             _texture_nodes(mat, bsdf, spec["color"], textures, spec["texture"])
@@ -679,7 +766,9 @@ def build_scene(p):
     units_root["vh_role"] = "units"
 
     face_total = 0
+    interior_rooms = 0
     for key, data in build_geometry(p).items():
+        interior_rooms += getattr(data, "room_count", 0)
         if not data.faces:
             continue
         name = f"T{code}-{key}"
@@ -737,7 +826,7 @@ def build_scene(p):
         obj["vh_final"] = vol["final"]
         unit_count += 1
 
-    return {"faces": face_total, "units": unit_count, "height": round(p["floorCount"] * p["floorHeight"], 3)}
+    return {"faces": face_total, "units": unit_count, "height": round(p["floorCount"] * p["floorHeight"], 3), "interiorRooms": interior_rooms}
 
 
 def export_glb(path):
