@@ -3,6 +3,7 @@ import {
   Plane, PointLight, Scene, ShadowGenerator, Texture, TransformNode, UniversalCamera, Vector3, type AbstractEngine, type PBRMaterial,
 } from './babylon';
 import { createEngine } from './engine';
+import {compatibilityMode, renderScaling, waitForVisibleFrame} from './graphics-safety';
 import { box as boxGeo, compose, cylinder as cylinderGeo, merge, meshFrom, pbr, polygon, rgb, shadows, transform, translate, tube, type Geo, type MaterialOptions } from './geometry';
 import { skyEnvironment } from './world';
 import type { PlanLayout, Point, RoomKind } from '../types';
@@ -430,9 +431,13 @@ export class InteriorViewer {
   private readonly previousFocus=document.activeElement as HTMLElement|null;
   private last = performance.now();
   private closed = false;
+  private compatibilityMode = false;
   private readonly onKey = (e: KeyboardEvent) => this.key(e);
   private readonly onKeyUp = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
-  private readonly onResize = () => {this.engine?.resize();this.orbit?.getProjectionMatrix(true);};
+  private readonly onResize = () => {
+    this.engine?.setHardwareScalingLevel(renderScaling(innerWidth, innerHeight, devicePixelRatio, 1.5, this.compatibilityMode));
+    this.engine?.resize();this.orbit?.getProjectionMatrix(true);
+  };
   private readonly onBlur = () => this.keys.clear();
 
   constructor(private readonly layout: PlanLayout, private readonly options: InteriorOptions) {
@@ -473,16 +478,17 @@ export class InteriorViewer {
     if(window.innerWidth<=760){const panel=this.root.querySelector('.interior-panel')!;panel.classList.add('collapsed');panel.querySelector('button')!.setAttribute('aria-expanded','false');panel.querySelector('.interior-panel-toggle span')!.textContent='+';}
     this.root.querySelector('.interior-x')!.addEventListener('click', () => this.close());
     window.addEventListener('keydown', this.onKey, true);
-    this.ready=this.init().catch(error=>{this.root.classList.remove('loading');this.status('Não foi possível abrir o apartamento','Feche esta vista e tente novamente.');throw error;});
+    this.ready=this.init().catch(error=>{this.engine?.stopRenderLoop();this.root.classList.remove('loading');this.status('Não foi possível abrir o apartamento','Feche esta vista. Se o monitor piscar, nao insista e use o modo seguro.');throw error;});
     void this.ready.catch(error=>console.error('Interior indisponível',error));
   }
 
   private async init() {
     const stage = this.root.querySelector('.interior-stage') as HTMLElement;
-    const { engine, canvas } = await createEngine(stage);
+    const { engine, canvas, webgpu } = await createEngine(stage);
     if (this.closed) { engine.dispose(); return; }
     this.engine = engine;
-    engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio || 1, 2));
+    this.compatibilityMode = compatibilityMode(webgpu, location.search);
+    engine.setHardwareScalingLevel(renderScaling(innerWidth, innerHeight, devicePixelRatio, 1.5, this.compatibilityMode));
     const scene = this.scene = new Scene(engine);
     scene.useRightHandedSystem = true;
     scene.clearColor = new Color4(0.94, 0.935, 0.92, 1);
@@ -491,8 +497,15 @@ export class InteriorViewer {
     scene.environmentIntensity = 0.55;
 
     this.orbit = new ArcRotateCamera('orbit', 0, 1, 10, new Vector3(0, 0.6, 0), scene);
+    let applyingInset = false;
     this.orbit.onProjectionMatrixChangedObservable.add(()=>{
-      if(this.mode==='model'&&window.innerWidth>760){const width=this.root.querySelector('.interior-panel')!.getBoundingClientRect().width;this.orbit.getProjectionMatrix().addAtIndex(8,-(width+16)/window.innerWidth);}
+      if(applyingInset||engine.getRenderHeight()<1)return;
+      if(this.mode==='model'&&window.innerWidth>760){
+        const width=this.root.querySelector('.interior-panel')!.getBoundingClientRect().width;
+        applyingInset=true;
+        try{this.orbit.getProjectionMatrix().addAtIndex(8,-(width+16)/window.innerWidth);}
+        finally{applyingInset=false;}
+      }
     });
     this.orbit.minZ = 0.05; this.orbit.maxZ = 300; this.orbit.fov = deg(45);
     this.orbit.upperBetaLimit = deg(80); this.orbit.lowerRadiusLimit = 2; this.orbit.upperRadiusLimit = this.size * 3;
@@ -503,13 +516,20 @@ export class InteriorViewer {
     canvas.tabIndex=0;canvas.setAttribute('aria-label','Apartamento 3D. Arraste para olhar e use W A S D para caminhar.');
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    const pipeline = new DefaultRenderingPipeline('interior', true, scene, [this.orbit, this.walker]);
-    pipeline.samples = 4; pipeline.fxaaEnabled = true; pipeline.bloomEnabled = false;
-    pipeline.imageProcessingEnabled = true;
-    pipeline.imageProcessing.toneMappingEnabled = true;
-    pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-    pipeline.imageProcessing.exposure = .94 / .6;
-    pipeline.imageProcessing.contrast=1.06;
+    if (this.compatibilityMode) {
+      const image = scene.imageProcessingConfiguration;
+      image.applyByPostProcess = false; image.toneMappingEnabled = true;
+      image.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+      image.exposure = .94 / .6; image.contrast = 1.06;
+    } else {
+      const pipeline = new DefaultRenderingPipeline('interior', true, scene, [this.orbit, this.walker]);
+      pipeline.samples = 2; pipeline.fxaaEnabled = false; pipeline.bloomEnabled = false;
+      pipeline.imageProcessingEnabled = true;
+      pipeline.imageProcessing.toneMappingEnabled = true;
+      pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+      pipeline.imageProcessing.exposure = .94 / .6;
+      pipeline.imageProcessing.contrast=1.06;
+    }
 
     this.build();
     this.bind(canvas);
@@ -517,7 +537,19 @@ export class InteriorViewer {
     window.addEventListener('resize', this.onResize);
     window.addEventListener('blur',this.onBlur);document.addEventListener('visibilitychange',this.onBlur);
     this.setMode('model');
-    engine.runRenderLoop(() => this.loop());
+    engine.onContextLostObservable.add(() => {
+      engine.stopRenderLoop();
+      this.root.classList.remove('loading');
+      this.status('Renderizacao interrompida', 'O navegador perdeu o contexto grafico. Feche esta vista; nao sera recarregada automaticamente.');
+    });
+    engine.runRenderLoop(() => {
+      try { this.loop(); } catch (error) {
+        engine.stopRenderLoop(); console.error('Falha no passeio 3D', error);
+        this.root.classList.remove('loading'); this.status('Falha grafica', 'Feche esta vista e use o modo seguro.');
+      }
+    });
+    await waitForVisibleFrame(scene);
+    if(this.closed)return;
     this.root.classList.remove('loading');
   }
 
@@ -532,7 +564,7 @@ export class InteriorViewer {
         map.update(true); map.wrapU = map.wrapV = Texture.WRAP_ADDRESSMODE;
         map.uScale = map.vScale = 1 / (tile ?? 1); map.anisotropicFilteringLevel = 8;
       }
-      this.materials.set(key, pbr(this.scene, key, { ...options, map, maxLights: 14 }));
+      this.materials.set(key, pbr(this.scene, key, { ...options, map, maxLights: this.compatibilityMode ? 4 : 8 }));
     }
     return this.materials.get(key)!;
   }
@@ -565,7 +597,8 @@ export class InteriorViewer {
     this.sun.position = new Vector3(s * 0.6, s * 1.4, s * 0.8);
     this.hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), scene);
     this.hemi.diffuse = rgb('#f5f7fb'); this.hemi.groundColor = rgb('#b8ad9c'); this.hemi.intensity = 1.1 / Math.PI; this.hemi.specular.set(0, 0, 0);
-    const shadow = new ShadowGenerator(2048, this.sun);
+    if (!this.compatibilityMode) {
+    const shadow = new ShadowGenerator(1024, this.sun);
     shadow.usePercentageCloserFiltering = true; shadow.filteringQuality = ShadowGenerator.QUALITY_HIGH;
     shadow.bias = 0.0008; shadow.normalBias = 0.01;
     scene.onNewMeshAddedObservable.add(() => { dirty = true; });
@@ -575,6 +608,7 @@ export class InteriorViewer {
       shadow.getShadowMap()!.renderList = scene.meshes.filter((mesh) => mesh.metadata?.castShadow === true && mesh.isEnabled());
     });
     this.refreshShadows = () => { dirty = true; };
+    }
 
     const disc = Array.from({ length: 48 }, (_, i) => { const t = (i / 48) * Math.PI * 2; return [Math.cos(t) * s * 3, Math.sin(t) * s * 3] as Point; });
     shadows(meshFrom('ground', polygon(disc, -0.04), scene, this.material('ground', m('#ebe9e3', 1))), false);
@@ -889,6 +923,8 @@ export class InteriorViewer {
   }
 
   private loop() {
+    if(document.hidden || this.closed)return;
+    if(performance.now()-this.last<1000/(this.compatibilityMode?30:60)-1)return;
     const now = performance.now(); const dt = Math.min(0.05, (now - this.last) / 1000); this.last = now;
     if (this.mode === 'walk') {
       const k = this.keys; const speed = 1.2 * dt;

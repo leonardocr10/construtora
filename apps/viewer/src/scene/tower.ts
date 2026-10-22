@@ -287,6 +287,7 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
   // apartamento, as faixas de pavimento, a torre recortada e a caixa de clique continuam os daqui.
   const loaded = glbUrl ? schedule(async () => {
     const container = await LoadAssetContainerAsync(glbUrl, scene, { pluginExtension: '.glb' });
+    if (scene.metadata?.graphicsFailed) { container.dispose(); return; }
     container.addAllToScene();
     for (const node of container.transformNodes) if (/-units$/.test(node.name)) node.dispose(false, true);
     const root = container.rootNodes[0]; if (!root) return;

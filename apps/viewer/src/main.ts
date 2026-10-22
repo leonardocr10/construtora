@@ -8,6 +8,7 @@ import type { InteriorViewer } from './scene/interior';
 import { bindTowerHover } from './scene/hover';
 import { defaultSlots, type TowerObject } from './scene/tower';
 import { qualityLevels, qualityOrder, type QualityLevel } from './scene/quality';
+import {waitForVisibleFrame} from './scene/graphics-safety';
 import type { Development, FloorPlan, Point, Unit, UnitStatus } from './types';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -54,7 +55,7 @@ async function start() {
   world.setArchitecturalLighting(dev.slug === 'union-vista' && new URLSearchParams(location.search).get('acabamento') !== 'original');
   const siteImage = dev.viewer.layout?.siteImageAssetId ? api.assetUrl(dev.viewer.layout.siteImageAssetId) : null;
   const towerModels = new Map(dev.buildings.filter((b) => b.model3d?.glb?.assetId).map((b) => [b.id, api.modelUrl(b.model3d!.glb!.assetId)] as const));
-  site = buildSite(world.scene, dev, siteImage, library, towerModels);
+  site = buildSite(world.scene, dev, siteImage, library, towerModels, world.compatibilityMode ? 1 : 2);
   world.onDusk((t) => { for (const tower of site.towers) tower.setDusk(t); });
   // A câmera não entra nas torres: a aproximação para na fachada (na janela).
   for (const tower of site.towers) world.addObstacle(tower.group, () => tower.solids());
@@ -71,7 +72,7 @@ async function start() {
   overview(0.01);
 
   $('loading-text').textContent = 'Preparando o terreno';
-  const renderer = world.webgpu ? 'WebGPU' : 'WebGL2';
+  const renderer = world.compatibilityMode ? 'WebGL · compatibilidade' : world.webgpu ? 'WebGPU' : 'WebGL2';
   $('sources').textContent = 'Carregando detalhes e entorno…';
   // Entorno e detalhes nao bloqueiam o primeiro quadro navegavel.
   const surroundingsReady = (async () => {
@@ -101,10 +102,14 @@ async function start() {
   }
   })();
   await site.baseReady;
+  if (world.graphicsError) throw world.graphicsError;
+  await waitForVisibleFrame(world.scene);
+  if (world.graphicsError) throw world.graphicsError;
   await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   inspect.interactiveAt = performance.now();
   $('loading').style.opacity = '0';
-  setTimeout(() => $('loading').remove(), 500);
+  $('app').classList.add('graphics-ready');
+  setTimeout(() => { if ($('app').classList.contains('graphics-ready')) document.getElementById('loading')?.remove(); }, 500);
   if (dev.viewer.lighting?.mode === 'sunset') setMode('sunset');
   // Enquadramento de revisao identico para comparar o jardim, sem alterar a camera padrao do empreendimento.
   if(slug==='union-vista'&&new URLSearchParams(location.search).get('cena')==='jardim-torre3'){
@@ -168,6 +173,7 @@ function renderViews() {
   });
   document.addEventListener('fullscreenchange', () => { $('fullscreen').innerHTML = document.fullscreenElement ? '⤢<span class="t">Sair da tela cheia</span>' : '⛶<span class="t">Tela cheia</span>'; });
   const select = $<HTMLSelectElement>('quality');
+  if (world.compatibilityMode) { select.disabled = true; select.title = 'Modo de compatibilidade: qualidade limitada para proteger o processamento grafico.'; }
   select.addEventListener('change', () => world.setQuality(select.value as QualityLevel));
   world.onQualityChange((level) => { select.value = level; });
 }
@@ -678,4 +684,19 @@ const panelObserver = new MutationObserver(updateInset);
 for (const id of ['tower-panel', 'mirror-panel', 'unit-panel', 'amenities-panel']) panelObserver.observe($(id), { attributes: true, attributeFilter: ['class'] });
 window.addEventListener('resize',updateInset);
 
-void start();
+function graphicsFailure(message: string) {
+  if (world) { world.paused = true; world.engine.stopRenderLoop(); }
+  $('app').classList.remove('graphics-ready');
+  let overlay = document.getElementById('loading');
+  if (!overlay) { overlay = document.createElement('div'); overlay.id = 'loading'; $('app').appendChild(overlay); }
+  overlay.className = 'loading'; overlay.style.opacity = '1'; overlay.setAttribute('role', 'alert');
+  overlay.replaceChildren();
+  const title = document.createElement('h2'); title.textContent = 'A visualizacao 3D foi interrompida';
+  const text = document.createElement('p'); text.textContent = message;
+  const hint = document.createElement('p'); hint.textContent = 'Nenhuma recarga automatica sera feita. Se o monitor inteiro piscar novamente, feche esta aba.';
+  const retry = document.createElement('a'); retry.className = 'btn primary'; retry.textContent = 'Abrir em modo seguro';
+  const url = new URL(location.href); url.searchParams.set('seguro', '1'); retry.href = url.href;
+  overlay.append(title, text, hint, retry);
+}
+window.addEventListener('vistahub:graphics-error', event => graphicsFailure(String((event as CustomEvent).detail)));
+void start().catch(error => graphicsFailure(error instanceof Error ? error.message : 'Falha ao iniciar a cena.'));

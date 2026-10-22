@@ -8,6 +8,7 @@ import { createEngine, gpuName } from './engine';
 import { rgb } from './geometry';
 import { Sky } from './sky';
 import { detectQuality, qualityLevels, savedQuality, saveQuality, type QualityLevel } from './quality';
+import {compatibilityMode, renderScaling} from './graphics-safety';
 
 export type LightMode = 'day' | 'sunset';
 
@@ -80,6 +81,8 @@ export class World {
   private architecturalLighting = false;
   /** Pausa a renderização (planta 3D aberta por cima). */
   paused = false;
+  readonly compatibilityMode: boolean;
+  graphicsError: Error | null = null;
 
   static async create(host: HTMLElement, labelLayer: HTMLElement) {
     const { engine, canvas, webgpu } = await createEngine(host);
@@ -88,6 +91,7 @@ export class World {
 
   private constructor(private readonly host: HTMLElement, private readonly labelLayer: HTMLElement, readonly engine: AbstractEngine, readonly canvas: HTMLCanvasElement, webgpu: boolean) {
     this.webgpu = webgpu;
+    this.compatibilityMode = compatibilityMode(webgpu, location.search);
     const scene = this.scene = new Scene(engine);
     scene.useRightHandedSystem = true;
     scene.clearColor = new Color4(0.9, 0.93, 0.92, 1);
@@ -125,8 +129,8 @@ export class World {
 
     this.sky = new Sky(scene);
 
-    this.quality = savedQuality() ?? detectQuality(gpuName(engine));
-    this.qualityChosen = savedQuality() != null;
+    this.quality = this.compatibilityMode ? 'eco' : savedQuality() ?? detectQuality(gpuName(engine));
+    this.qualityChosen = !this.compatibilityMode && savedQuality() != null;
     this.applyQuality();
     this.setMode('day', true);
 
@@ -134,23 +138,47 @@ export class World {
     scene.onMeshRemovedObservable.add(() => { this.shadowDirty = true; });
     new ResizeObserver(() => this.resize()).observe(host);
     this.resize();
-    engine.runRenderLoop(() => this.frame());
+    engine.onContextLostObservable.add(() => this.failGraphics(new Error('O navegador perdeu o contexto grafico.')));
+    engine.runRenderLoop(() => { try { this.frame(); } catch (error) { this.failGraphics(error instanceof Error ? error : new Error(String(error))); } });
+  }
+
+  private failGraphics(error: Error) {
+    if (this.graphicsError) return;
+    this.graphicsError = error;
+    this.scene.metadata = {...this.scene.metadata, graphicsFailed: true};
+    this.paused = true;
+    this.engine.stopRenderLoop();
+    console.error('Renderizacao 3D interrompida', error);
+    window.dispatchEvent(new CustomEvent('vistahub:graphics-error', {detail: error.message}));
   }
 
   // ——— qualidade ———
 
   /** Troca o nível de qualidade (sombras, SSAO, antisserrilhado e resolução) e lembra a escolha. */
   setQuality(level: QualityLevel, chosen = true) {
+    if (this.compatibilityMode) level = 'eco';
     this.quality = level;
-    if (chosen) { this.qualityChosen = true; saveQuality(level); }
+    if (chosen && !this.compatibilityMode) { this.qualityChosen = true; saveQuality(level); }
     this.applyQuality();
   }
 
   private applyQuality() {
     const q = qualityLevels[this.quality];
-    this.engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio || 1, q.maxPixelRatio));
+    this.engine.setHardwareScalingLevel(renderScaling(this.host.clientWidth, this.host.clientHeight, window.devicePixelRatio, q.maxPixelRatio, this.compatibilityMode));
 
     this.shadow?.dispose();
+    this.shadow = null;
+    this.pipeline?.dispose(); this.pipeline = null;
+    this.ssao?.dispose(); this.ssao = null;
+    if (this.compatibilityMode) {
+      // Sem HDR/MRT, MSAA, SSAO ou cascatas: caminho de uma passagem para drivers WebGL antigos.
+      const image = this.scene.imageProcessingConfiguration;
+      image.applyByPostProcess = false; image.toneMappingEnabled = true;
+      image.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+      image.exposure = this.current.exposure * acesExposure;
+      if (this.library) { this.library.lowRes = true; this.library.lodScale = q.lodScale; }
+      return;
+    }
     const shadow = new CascadedShadowGenerator(q.shadowMapSize, this.sun);
     shadow.numCascades = q.cascades;
     shadow.lambda = 0.82;
@@ -165,8 +193,6 @@ export class World {
     shadow.darkness = 0.2; // sombra do sol nunca preta: a fachada na sombra continua clara
     this.shadow = shadow; this.shadowDirty = true;
 
-    this.pipeline?.dispose(); this.pipeline = null;
-    this.ssao?.dispose(); this.ssao = null;
     if (q.ssao) {
       try {
         const ssao = new SSAO2RenderingPipeline('ssao', this.scene, { ssaoRatio: q.ssao.ratio, blurRatio: 1 }, [this.camera], true);
@@ -289,6 +315,7 @@ export class World {
       this.scene.environmentIntensity = 0.5 - 0.15 * t;
     }
     if (this.pipeline) this.pipeline.imageProcessing.exposure = p.exposure * acesExposure;
+    else this.scene.imageProcessingConfiguration.exposure = p.exposure * acesExposure;
     for (const listener of this.duskListeners) listener(t);
   }
 
@@ -407,17 +434,23 @@ export class World {
   }
 
   private inset = 0;
+  private applyingInset = false;
   /** Desloca o centro óptico quando painéis ocupam um lado da tela (positivo = painéis à direita). */
   setInset(pixels: number) { this.inset = pixels; this.camera.getProjectionMatrix(true); }
 
   /** Projeção descentrada (como setViewOffset do Three): soma ao termo de x que depende da profundidade. */
   private applyInset() {
     const w = this.host.clientWidth;
-    if (!this.inset || w <= 760) return;
-    this.camera.getProjectionMatrix().addAtIndex(8, this.inset / w);
+    if (this.applyingInset || !this.inset || w <= 760 || this.engine.getRenderHeight() < 1) return;
+    // O observable da projecao nao pode reentrar em getProjectionMatrix durante resize/perda de contexto.
+    this.applyingInset = true;
+    try { this.camera.getProjectionMatrix().addAtIndex(8, this.inset / w); }
+    finally { this.applyingInset = false; }
   }
 
   private resize() {
+    const q = qualityLevels[this.quality];
+    this.engine.setHardwareScalingLevel(renderScaling(this.host.clientWidth, this.host.clientHeight, window.devicePixelRatio, q.maxPixelRatio, this.compatibilityMode));
     this.engine.resize();
     this.camera.getProjectionMatrix(true);
   }
@@ -434,6 +467,7 @@ export class World {
   private slowSince = 0;
   private frame() {
     const now = performance.now();
+    if (document.hidden || now - this.lastFrame < 1000 / (this.compatibilityMode ? 30 : 60) - 1) return;
     const dt = Math.min((now - this.lastFrame) / 1000, 0.1); this.lastFrame = now;
     if (this.paused) return;
     if (this.flight) {

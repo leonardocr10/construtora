@@ -16,6 +16,7 @@ button { font: inherit; cursor: pointer; }
 #app, #stage { position: fixed; inset: 0; }
 #stage canvas { display: block; outline: none; touch-action: none; }
 #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
+#app:not(.graphics-ready) #labels { visibility: hidden; }
 .brand, .actions, .crumbs, .panel, .hint, .towers, .credits, .osm, .caption, .views { z-index: 5; }
 .hidden { display: none !important; }
 .card { background: var(--card); border-radius: 14px; box-shadow: 0 6px 24px rgba(30, 20, 50, 0.14); backdrop-filter: blur(8px); }
