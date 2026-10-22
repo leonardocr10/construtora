@@ -20,13 +20,15 @@ export interface QualitySettings {
   lowResTextures: boolean; lodScale: number;
   /** Brilho suave (bloom) e resolução do céu HDR pré-filtrado. */
   bloom: boolean; envSize: number;
+  /** Árvores do entorno (calçadas e terrenos vazios), ~140–480 triângulos cada; fixado ao montar o entorno. */
+  trees: number;
 }
 
 export const qualityLevels: Record<QualityLevel, QualitySettings> = {
-  eco: { label: 'Baixa', shadowMapSize: 1024, cascades: 2, shadowFiltering: 0, ssao: null, msaa: 1, fxaa: true, maxPixelRatio: 1, lowResTextures: true, lodScale: 0.45, bloom: false, envSize: 128 },
-  balanced: { label: 'Média', shadowMapSize: 2048, cascades: 3, shadowFiltering: 1, ssao: { ratio: 0.5, samples: 8 }, msaa: 2, fxaa: false, maxPixelRatio: 1.25, lowResTextures: true, lodScale: 0.7, bloom: false, envSize: 128 },
-  high: { label: 'Alta', shadowMapSize: 2048, cascades: 4, shadowFiltering: 2, ssao: { ratio: 0.75, samples: 16 }, msaa: 4, fxaa: false, maxPixelRatio: 1.5, lowResTextures: false, lodScale: 1, bloom: true, envSize: 256 },
-  ultra: { label: 'Ultra', shadowMapSize: 4096, cascades: 4, shadowFiltering: 2, ssao: { ratio: 1, samples: 32 }, msaa: 4, fxaa: true, maxPixelRatio: 2, lowResTextures: false, lodScale: 1.6, bloom: true, envSize: 256 },
+  eco: { label: 'Baixa', shadowMapSize: 1024, cascades: 2, shadowFiltering: 0, ssao: null, msaa: 1, fxaa: true, maxPixelRatio: 1, lowResTextures: true, lodScale: 0.45, bloom: false, envSize: 128, trees: 3000 },
+  balanced: { label: 'Média', shadowMapSize: 2048, cascades: 3, shadowFiltering: 1, ssao: { ratio: 0.5, samples: 8 }, msaa: 2, fxaa: false, maxPixelRatio: 1.25, lowResTextures: true, lodScale: 0.7, bloom: false, envSize: 128, trees: 6000 },
+  high: { label: 'Alta', shadowMapSize: 2048, cascades: 4, shadowFiltering: 2, ssao: { ratio: 0.75, samples: 16 }, msaa: 4, fxaa: false, maxPixelRatio: 1.5, lowResTextures: false, lodScale: 1, bloom: true, envSize: 256, trees: 9000 },
+  ultra: { label: 'Ultra', shadowMapSize: 4096, cascades: 4, shadowFiltering: 2, ssao: { ratio: 1, samples: 32 }, msaa: 4, fxaa: true, maxPixelRatio: 2, lowResTextures: false, lodScale: 1.6, bloom: true, envSize: 256, trees: 11000 },
 };
 export const qualityOrder: QualityLevel[] = ['eco', 'balanced', 'high', 'ultra'];
 

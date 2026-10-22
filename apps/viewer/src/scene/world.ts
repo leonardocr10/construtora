@@ -1,5 +1,5 @@
 import {
-  ArcRotateCamera, CascadedShadowGenerator, Color3, Color4, DefaultRenderingPipeline, DirectionalLight, HemisphericLight,
+  ArcRotateCamera, CascadedShadowGenerator, Color3, Color4, ColorCurves, DefaultRenderingPipeline, DirectionalLight, HemisphericLight,
   ImageProcessingConfiguration, Matrix, RawCubeTexture, Scene, SSAO2RenderingPipeline, Vector3, type AbstractEngine, type AbstractMesh, type TransformNode,
   type BaseTexture,
 } from './babylon';
@@ -35,9 +35,11 @@ interface Palette { top: Color3; bottom: Color3; fog: Color3; sun: Color3; hemiS
 const palettes: Record<LightMode, Palette> = {
   // Tarde clara: céu azul com horizonte enevoado e quente, sol a 25° (baixo o bastante para aparecer nas vistas; sombras longas).
   // Sol mais forte que o ambiente: faces ao sol claras e faces na sombra mais fechadas, como numa foto; névoa só no horizonte.
-  day: { top: rgb('#4f8fd6'), bottom: rgb('#eeeae2'), fog: rgb('#e9e6dc'), sun: rgb('#fff1dc'), hemiSky: rgb('#e0eaf4'), hemiGround: rgb('#c1b9a9'), sunIntensity: 3.0, hemiIntensity: 1.5 / Math.PI, elevation: 25, azimuth: 35, exposure: 1.0, fogNear: 1200, fogFar: 4500 },
+  // Névoa azulada (perspectiva aérea): o entorno distante esfria e clareia, como em foto de drone, em vez de sumir
+  // num bege; começa mais perto para dar profundidade às vistas aéreas.
+  day: { top: rgb('#4f8fd6'), bottom: rgb('#eeeae2'), fog: rgb('#d6e1ea'), sun: rgb('#fff1dc'), hemiSky: rgb('#e0eaf4'), hemiGround: rgb('#c1b9a9'), sunIntensity: 3.0, hemiIntensity: 1.5 / Math.PI, elevation: 25, azimuth: 35, exposure: 1.0, fogNear: 800, fogFar: 5200 },
   // Fim de tarde: céu enevoado e quente, sol baixo a oeste, sombras longas e luz difusa reduzida.
-  sunset: { top: rgb('#8f9cb8'), bottom: rgb('#e6c49c'), fog: rgb('#dcc0a0'), sun: rgb('#ffae6e'), hemiSky: rgb('#e6cdb6'), hemiGround: rgb('#8f7a69'), sunIntensity: 2.2, hemiIntensity: 1.15 / Math.PI, elevation: 8, azimuth: -72, exposure: 1.0, fogNear: 420, fogFar: 2800 },
+  sunset: { top: rgb('#8f9cb8'), bottom: rgb('#e6c49c'), fog: rgb('#dcc0a0'), sun: rgb('#ffae6e'), hemiSky: rgb('#e6cdb6'), hemiGround: rgb('#8f7a69'), sunIntensity: 2.2, hemiIntensity: 1.15 / Math.PI, elevation: 8, azimuth: -72, exposure: 1.0, fogNear: 600, fogFar: 3800 },
 };
 const transitionSeconds = 3.2;
 /** Giro do céu HDR (radianos) para o sol do céu coincidir com a luz direcional (ver build_library.py). */
@@ -184,6 +186,13 @@ export class World {
     pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
     pipeline.imageProcessing.contrast = 1.12;
     pipeline.imageProcessing.vignetteEnabled = true; pipeline.imageProcessing.vignetteWeight = 0.5; pipeline.imageProcessing.vignetteStretch = 0.4;
+    // Cor: um pouco mais de saturação nos meios-tons e sombras levemente frias (o ACES dessatura e esquenta tudo).
+    const curves = new ColorCurves();
+    curves.globalSaturation = 8; curves.shadowsHue = 215; curves.shadowsDensity = 12; curves.shadowsSaturation = 20;
+    pipeline.imageProcessing.colorCurvesEnabled = true; pipeline.imageProcessing.colorCurves = curves;
+    // Nitidez leve nos níveis altos: caixilhos, frisos e copas de árvore mais definidos depois do MSAA/FXAA.
+    pipeline.sharpenEnabled = q.bloom;
+    if (q.bloom) { pipeline.sharpen.edgeAmount = 0.14; pipeline.sharpen.colorAmount = 1; }
     pipeline.imageProcessing.exposure = this.current.exposure * acesExposure;
     this.pipeline = pipeline;
     if (this.scene.prePassRenderer) this.scene.prePassRenderer.samples = q.msaa;

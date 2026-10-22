@@ -73,7 +73,7 @@ async function start() {
   const renderer = world.webgpu ? 'WebGPU' : 'WebGL2';
   try {
     const surroundings = await api.surroundings(slug);
-    const result = buildSurroundings(world.scene, surroundings, site.lotWorld);
+    const result = buildSurroundings(world.scene, surroundings, site.lotWorld, qualityLevels[world.quality].trees);
     // Entorno é estático: matrizes congeladas (menos trabalho por quadro).
     for (const mesh of result.group.getChildMeshes()) mesh.freezeWorldMatrix();
     const own = new Set(site.roadAnchors.map((r) => r.name.split(',')[0].toLowerCase()));

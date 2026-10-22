@@ -24,6 +24,7 @@ export type { BaseTexture } from '@babylonjs/core/Materials/Textures/baseTexture
 export { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
 export { RawCubeTexture } from '@babylonjs/core/Materials/Textures/rawCubeTexture';
 export { ImageProcessingConfiguration } from '@babylonjs/core/Materials/imageProcessingConfiguration';
+export { ColorCurves } from '@babylonjs/core/Materials/colorCurves';
 export { Layer } from '@babylonjs/core/Layers/layer';
 export { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
 export { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline';

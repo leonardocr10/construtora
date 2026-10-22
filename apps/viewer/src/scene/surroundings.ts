@@ -4,6 +4,7 @@ import { asphaltTile, grassTile, pavingTile } from './ground';
 import { crownGeometry } from './trees';
 import { box, compose, extrude, instanced, merge, meshFrom, pbr, plane, polygon, rgb, rotateX, shadows, translate, type Geo } from './geometry';
 import {buildContextBuildings} from './context-buildings';
+import {buildVegetation} from './vegetation';
 import {partsToGeo} from './ground-vector';
 import {buildRoadNetwork,placeHouses,roadWidth} from './urban-geometry';
 import clipping,{type MultiPolygon} from 'polygon-clipping';
@@ -26,12 +27,15 @@ function canvas2d(width: number, height: number) {
   return { canvas, ctx: canvas.getContext('2d')! };
 }
 
-/** Chão da cidade visto do alto: grama seca e terra em manchas suaves, sem emenda (terrenos e quintais). */
+/**
+ * Chão da cidade visto do alto, sem emenda (terrenos e quintais): capim de cerrado urbano, do verde-oliva ao
+ * palha seco, com manchas de terra avermelhada. Antes era um verde-menta claro e uniforme que lavava a cena.
+ */
 function cityGroundTile(size: number) {
   const { canvas, ctx } = canvas2d(size, size);
   const random = seeded(7);
-  ctx.fillStyle = '#9da986'; ctx.fillRect(0, 0, size, size);
-  const blobs: [string, number][] = [['rgba(132,160,96,0.09)', 22], ['rgba(190,170,130,0.07)', 14], ['rgba(110,140,84,0.08)', 14], ['rgba(212,210,182,0.06)', 12]];
+  ctx.fillStyle = '#8e9a68'; ctx.fillRect(0, 0, size, size);
+  const blobs: [string, number][] = [['rgba(176,160,104,0.16)', 26], ['rgba(96,126,66,0.15)', 30], ['rgba(150,108,76,0.08)', 10], ['rgba(204,196,150,0.08)', 14], ['rgba(74,104,56,0.1)', 18]];
   for (const [color, count] of blobs) for (let i = 0; i < count; i++) {
     const x = random() * size, y = random() * size, r = size * (0.05 + random() * 0.16);
     for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) {
@@ -116,13 +120,13 @@ export interface SurroundingsResult { group: TransformNode; illustrativeHouses: 
  * Entorno real a partir do OpenStreetMap: ruas, áreas verdes, água e edificações mapeadas.
  * Onde o OSM não tem casas, gera casas ilustrativas ao longo das ruas residenciais.
  */
-export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: Point[]): SurroundingsResult {
+export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: Point[], maxTrees = 6000): SurroundingsResult {
   const group = new TransformNode('surroundings', scene);
   const random = seeded(42);
   const flat = (name: string, geo: Geo, material: ReturnType<typeof pbr>) => shadows(meshFrom(name, geo, scene, material, group), false);
 
   const disc = Array.from({ length: 64 }, (_, i) => { const t = (i / 64) * Math.PI * 2; return [Math.cos(t) * data.radius * 2.6, Math.sin(t) * data.radius * 2.6] as Point; });
-  flat('city-ground', polygon(disc, -0.05), pbr(scene, 'city-ground', { map: tiled(scene, 'city-ground', cityGroundTile(512), 35), roughness: 1 }));
+  flat('city-ground', polygon(disc, -0.05), pbr(scene, 'city-ground', { map: tiled(scene, 'city-ground', cityGroundTile(1024), 80), roughness: 1 }));
 
   // Uma unica topologia: as calcadas sao a diferenca, nao faixas brancas sobre os cruzamentos.
   const network=buildRoadNetwork(data.roads,exclusion,data.buildings.map(b=>b.points));
@@ -213,6 +217,8 @@ export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: P
     }
   }
   if (trees.length) shadows(instanced('osm-trees', crownGeometry(), scene, pbr(scene, 'osm-trees', { color: 0x5b9a45, roughness: 0.9 }), trees, group), true);
-  group.metadata={roadRepairs:network.repairs,houseCount:sites.length,roadSurface:'union-buffer',sidewalks:'corridor-minus-asphalt',mappedBuildings};
+  // Arborização de calçadas e terrenos vazios: sem ela o entorno é um chão liso entre casas soltas.
+  const vegetation=buildVegetation(scene,group,{roads:data.roads,footprints:[...sites.map(s=>s.footprint),...data.buildings.map(b=>b.points)],exclusion,onRoad:(p,clearance)=>grid.near(p,clearance),radius:data.radius,random,maxTrees});
+  group.metadata={roadRepairs:network.repairs,houseCount:sites.length,roadSurface:'union-buffer',sidewalks:'corridor-minus-asphalt',mappedBuildings,vegetation:vegetation.count};
   return { group, illustrativeHouses: houses.length, roadLabels };
 }

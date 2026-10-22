@@ -450,8 +450,9 @@ function tile(size: number, paint: (ctx: CanvasRenderingContext2D, size: number)
 }
 
 export const asphaltTile = (size: number) => tile(size, (ctx, s) => {
-  ctx.fillStyle = '#5b5d64'; ctx.fillRect(0, 0, s, s);
-  for (let i = 0; i < s * s * 0.06; i++) { const l = 50 + rand() * 40; ctx.fillStyle = `rgba(${l},${l},${l + 6},${0.25 + rand() * 0.35})`; ctx.fillRect(rand() * s, rand() * s, 1.4, 1.4); }
+  // Cinza neutro puxado para o quente: com o céu azul refletido, o cinza azulado de antes virava azul-marinho.
+  ctx.fillStyle = '#625f5c'; ctx.fillRect(0, 0, s, s);
+  for (let i = 0; i < s * s * 0.06; i++) { const l = 50 + rand() * 40; ctx.fillStyle = `rgba(${l + 3},${l},${l - 2},${0.25 + rand() * 0.35})`; ctx.fillRect(rand() * s, rand() * s, 1.4, 1.4); }
   for (let i = 0; i < 6; i++) { // manchas suaves de desgaste
     // Centros coincidentes: centros aleatorios distintos criavam cones/triangulos escuros na rua.
     const x=rand()*s,y=rand()*s,r=s*(.15+rand()*.25),alpha=.025+rand()*.035;

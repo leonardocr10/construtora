@@ -5,11 +5,11 @@ import { compose, computeNormals, cylinder, hsl, icosahedron, instanced, merge, 
  * Copa de árvore orgânica: vários blocos poliédricos com vértices deslocados, mais escura embaixo
  * (cores por vértice) e com leve variação, numa geometria só, reaproveitada por todas as árvores.
  */
-export function crownGeometry(): Geo {
+export function crownGeometry(detail = 1): Geo {
   let seed = 11; const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   const blobs: [number, number, number, number][] = [[0, 0.1, 0, 0.78], [0.42, -0.08, 0.18, 0.55], [-0.38, -0.05, -0.2, 0.58], [0.1, 0.38, -0.32, 0.5], [-0.15, 0.32, 0.36, 0.48], [0.05, -0.3, 0, 0.6]];
   const parts = blobs.map(([x, y, z, r]) => {
-    const g = icosahedron(r, 1); const p = g.positions;
+    const g = icosahedron(r, detail); const p = g.positions;
     for (let i = 0; i < p.length; i += 3) { const k = 1 + (random() - 0.5) * 0.22; p[i] = p[i] * k + x; p[i + 1] = p[i + 1] * k * 0.9 + y; p[i + 2] = p[i + 2] * k + z; }
     g.normals = undefined;
     return g;
