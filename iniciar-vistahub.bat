@@ -59,7 +59,10 @@ echo [2/5] Criando banco, banco de sombra e usuario local...
 if /I "%MYSQL_USER%"=="root" (
   mysql --protocol=TCP -h 127.0.0.1 -u root -e "CREATE DATABASE IF NOT EXISTS `%MYSQL_DATABASE%` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE IF NOT EXISTS `%MYSQL_DATABASE%_shadow` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ) else (
-  mysql --protocol=TCP -h 127.0.0.1 -u root -e "CREATE DATABASE IF NOT EXISTS `%MYSQL_DATABASE%` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE IF NOT EXISTS `%MYSQL_DATABASE%_shadow` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE USER IF NOT EXISTS '%MYSQL_USER%'@'localhost' IDENTIFIED BY '%MYSQL_PASSWORD%'; CREATE USER IF NOT EXISTS '%MYSQL_USER%'@'127.0.0.1' IDENTIFIED BY '%MYSQL_PASSWORD%'; ALTER USER '%MYSQL_USER%'@'localhost' IDENTIFIED BY '%MYSQL_PASSWORD%'; ALTER USER '%MYSQL_USER%'@'127.0.0.1' IDENTIFIED BY '%MYSQL_PASSWORD%'; GRANT ALL PRIVILEGES ON `%MYSQL_DATABASE%`.* TO '%MYSQL_USER%'@'localhost'; GRANT ALL PRIVILEGES ON `%MYSQL_DATABASE%`.* TO '%MYSQL_USER%'@'127.0.0.1'; GRANT ALL PRIVILEGES ON `%MYSQL_DATABASE%_shadow`.* TO '%MYSQL_USER%'@'localhost'; GRANT ALL PRIVILEGES ON `%MYSQL_DATABASE%_shadow`.* TO '%MYSQL_USER%'@'127.0.0.1'; FLUSH PRIVILEGES;"
+  mysql --protocol=TCP -h 127.0.0.1 -u root -e "CREATE DATABASE IF NOT EXISTS `%MYSQL_DATABASE%` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE DATABASE IF NOT EXISTS `%MYSQL_DATABASE%_shadow` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+  if errorlevel 1 goto :mysql_failed
+  rem Usuario e senha saem da DATABASE_URL (a mesma conexao do Prisma e da API).
+  node scripts\db-user.mjs
 )
 if errorlevel 1 goto :mysql_failed
 set "MYSQL_PWD="

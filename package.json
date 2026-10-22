@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "realestate-platform",
   "version": "0.1.0",
   "private": true,
@@ -19,6 +19,7 @@
     "db:export": "node scripts/db-export.mjs",
     "db:restore": "node scripts/db-restore.mjs",
     "db:check": "node scripts/check-database.mjs",
+    "db:user": "node scripts/db-user.mjs",
     "db:status": "node scripts/with-env.mjs .env prisma migrate status --schema prisma/schema.prisma",
     "provision:admin": "node scripts/provision-admin.mjs",
     "seed:demo": "node scripts/seed-demo.mjs",
