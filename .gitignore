@@ -5,8 +5,6 @@ dist-test/
 .env
 coverage/
 *.log
-storage/*
-!storage/.gitkeep
 *.tsbuildinfo
 .claude/
 

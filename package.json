@@ -16,6 +16,8 @@
     "prisma:migrate": "npm run prisma:migrate --workspace=@vistahub/api --",
     "prisma:deploy": "npm run prisma:deploy --workspace=@vistahub/api",
     "db:init": "node scripts/db-init.mjs",
+    "db:export": "node scripts/db-export.mjs",
+    "db:restore": "node scripts/db-restore.mjs",
     "db:check": "node scripts/check-database.mjs",
     "db:status": "dotenv -e .env -- prisma migrate status --schema prisma/schema.prisma",
     "provision:admin": "node scripts/provision-admin.mjs",

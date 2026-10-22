@@ -19,6 +19,15 @@ No Windows, a forma mais simples e executar `iniciar-vistahub.bat` como usuario 
 
 O banco inicia vazio; o comando de provisionamento acima cria somente os registros informados pelo operador.
 
+### Instalar em outra máquina com todos os dados
+
+O repositório leva o banco completo em `database/vistahub.sql` (empreendimentos, torres, unidades, plantas, lazer, usuários, histórico de migrations) e os arquivos enviados em `storage/` (GLB das torres, imagens, plantas). Depois do `git clone`, execute `iniciar-vistahub.bat`: com o banco vazio ele restaura o dump sozinho, aponta `LOCAL_STORAGE_PATH` para a pasta `storage` do clone e abre API, painel e visualizador. Login: o mesmo usuário e senha desta máquina.
+
+- `npm run db:export`: atualiza `database/vistahub.sql` com o banco atual (faça antes de commitar).
+- `npm run db:restore`: restaura o dump num banco vazio; `npm run db:restore -- --replace` apaga o banco e restaura por cima.
+
+O repositório é público: o dump inclui o e-mail e o hash da senha do administrador, leads e visitas.
+
 ## Decisões de arquitetura
 
 - `organizationId` é obrigatório nas entidades de negócio e é obtido da associação do usuário autenticado — nunca do corpo da requisição.

@@ -19,7 +19,7 @@ if errorlevel 1 (
 
 if not exist ".env" (
   copy /y ".env.example" ".env" >nul
-  node -e "const fs=require('fs'),c=require('crypto');const p='.env',password='vistahub_local_'+c.randomBytes(12).toString('hex'),root='vistahub_root_'+c.randomBytes(12).toString('hex'),access=c.randomBytes(48).toString('base64url'),refresh=c.randomBytes(48).toString('base64url');let s=fs.readFileSync(p,'utf8').replaceAll('troque-esta-senha-local',password).replaceAll('troque-esta-senha-root-local',root).replaceAll('gere-um-segredo-aleatorio-longo',access).replaceAll('gere-outro-segredo-aleatorio-longo',refresh);fs.writeFileSync(p,s);"
+  node -e "const fs=require('fs'),c=require('crypto');const p='.env',password='vistahub_local_'+c.randomBytes(12).toString('hex'),root='vistahub_root_'+c.randomBytes(12).toString('hex'),access=c.randomBytes(48).toString('base64url'),refresh=c.randomBytes(48).toString('base64url');let s=fs.readFileSync(p,'utf8').replaceAll('troque-esta-senha-local',password).replaceAll('troque-esta-senha-root-local',root).replaceAll('gere-um-segredo-aleatorio-longo',access).replaceAll('gere-outro-segredo-aleatorio-longo',refresh);s=s.replace(/^LOCAL_STORAGE_PATH=.*$/m,'LOCAL_STORAGE_PATH='+require('path').resolve('storage').split(require('path').sep).join('/'));fs.writeFileSync(p,s);"
   echo [OK] Arquivo .env configurado com segredos locais aleatorios.
 )
 
@@ -72,7 +72,9 @@ echo [4/5] Instalando/atualizando dependencias Node.js...
 call npm install --no-audit --no-fund
 if errorlevel 1 goto :failed
 
-echo [5/5] Gerando cliente Prisma e aplicando migrations...
+echo [5/5] Restaurando os dados (banco vazio), gerando cliente Prisma e aplicando migrations...
+call npm run db:restore
+if errorlevel 1 goto :failed
 call npm run prisma:generate
 if errorlevel 1 goto :failed
 call npm run db:init
