@@ -30,7 +30,7 @@ import re
 import sys
 
 GENERATOR = "vistahub-build-tower"
-GENERATOR_VERSION = 3
+GENERATOR_VERSION = 4
 
 DEFAULT_COLORS = {"facade": "#e6ebe8", "accent": "#e0622a", "roof": "#d8dbd6", "base": "#c9ccc6"}
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -345,6 +345,8 @@ PANEL_T = 0.14       # espessura dos painéis de fachada (profundidade do vão d
 GLASS_OUT = 0.05     # plano do vidro, a partir da face da alvenaria (fica 9 cm recuado do painel)
 FRAME_DEPTH = 0.10
 UV_METERS = 2.0      # metros por repetição das texturas (o ladrilho de reboco cobre 2 × 2 m)
+BAND_H = 0.12        # altura do friso de laje entre pavimentos
+BAND_OUT = 0.04      # quanto o friso sai além dos painéis
 
 
 def build_geometry(p):
@@ -540,12 +542,19 @@ def build_geometry(p):
             balconies(face, wing_w, cells_per_wing, core_cell, fz)
         facade(Face(cx + d * wing_w / 2, 0, d, 0), D, 2, lambda c: 0, -1)
         if fac["floorJoints"]:
-            # Junta de dilatação entre pavimentos: frisos rasos (2 cm) em volta da lâmina.
-            for f in range(1, floors + 1):
+            # Friso de laje entre pavimentos: faixa de 12 cm saindo 4 cm dos painéis, em volta da lâmina. Com a
+            # sombra embaixo, marca os andares também de longe (a junta rasa de antes sumia a mais de ~50 m).
+            out = PANEL_T + BAND_OUT
+            for f in range(1, floors):
                 y = f * h - 0.02
-                m["joints"].box(cx, y, D / 2 + PANEL_T + 0.004, wing_w + 2 * PANEL_T, 0.014, 0.008)
-                m["joints"].box(cx, y, -D / 2 - PANEL_T - 0.004, wing_w + 2 * PANEL_T, 0.014, 0.008)
-                m["joints"].box(cx + d * (wing_w / 2 + PANEL_T + 0.004), y, 0, 0.008, 0.014, D + 2 * PANEL_T)
+                for fz in (1, -1):
+                    m["trim"].box(cx + d * out / 2, y, fz * (D / 2 + out / 2), wing_w + out, BAND_H, out)
+                m["trim"].box(cx + d * (wing_w / 2 + out / 2), y, 0, out, BAND_H, D + 2 * out)
+        # Coroamento: cornija saliente na base da platibanda, com a sombra marcando o topo da lâmina.
+        cornice = PANEL_T + 0.24
+        for fz in (1, -1):
+            m["trim"].box(cx + d * cornice / 2, H + 0.2, fz * (D / 2 + cornice / 2), wing_w + cornice, 0.36, cornice)
+        m["trim"].box(cx + d * (wing_w / 2 + cornice / 2), H + 0.2, 0, cornice, 0.36, D + 2 * cornice)
         # Platibanda: quatro paredes de 15 cm e rufo por cima.
         ox, oz = wing_w / 2 + 0.15, D / 2 + 0.15
         for sz in (-1, 1):

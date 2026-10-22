@@ -1,7 +1,7 @@
 import { Color3, Color4, Plane, LoadAssetContainerAsync, Mesh, TransformNode, Vector3, type Matrix, type PBRMaterial, type Scene } from './babylon';
 import '@babylonjs/core/Rendering/edgesRenderer';
 import type { Library } from './library';
-import {configureFacadeGlass} from './facade-glass';
+import {configureFacadeGlass,glassReflection} from './facade-glass';
 import {applyFacadePalette} from './facade-materials';
 import { box as boxGeo, compose, instanced, merge, meshFrom, offsetLightness, pbr, rgb, shadows, translate } from './geometry';
 import type { Building, TowerModel, UnitSlot, UnitStatus } from '../types';
@@ -265,7 +265,7 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
   const tintable = new Map<PBRMaterial, Color3>();
   for (const material of [wall, plain, panelMaterial, trim, accent]) tintable.set(material, material.albedoColor.clone());
   const litMaterials: PBRMaterial[] = [litMaterial];
-  const interiorLights=new Set<PBRMaterial>(),interiorLitWalls=new Set<PBRMaterial>();
+  const interiorLights=new Set<PBRMaterial>(),interiorLitWalls=new Set<PBRMaterial>(),reflectiveGlass=new Set<PBRMaterial>();
   let contextMuted=false,hovered=false;
   const bodyColors=new Map<PBRMaterial,Color3>();
   const rememberBody=()=>{for(const mesh of body){const m=mesh.material as PBRMaterial|null;if(m?.albedoColor&&!bodyColors.has(m))bodyColors.set(m,m.albedoColor.clone());}};
@@ -276,6 +276,8 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
     for(const m of litMaterials)m.emissiveIntensity=dusk*1.6*(contextMuted ? .25 : 1);
     for(const m of interiorLights)m.emissiveIntensity=(.05+dusk*1.8)*(contextMuted?.3:1);
     for(const m of interiorLitWalls)m.emissiveIntensity=(.025+dusk*.35)*(contextMuted?.3:1);
+    const sky=glassReflection(scene,dusk>.5?'sunset':'day');
+    for(const m of reflectiveGlass)if(m.reflectionTexture!==sky)m.reflectionTexture=sky;
   };
 
   // Modelo detalhado do Blender (scripts/blender/build_tower.py): substitui o corpo paramétrico. Os volumes por
@@ -307,7 +309,7 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
       }
       if (/^VH_(Tone|Wall|Accent|Trim|Roof)/.test(material.name) && !tintable.has(material)) tintable.set(material, material.albedoColor.clone());
       if (/^VH_Glass/.test(material.name)) {
-        if(hasInteriors)configureFacadeGlass(material,mesh,model.facade?.glass);
+        if(hasInteriors){configureFacadeGlass(material,mesh,model.facade?.glass);if(material.reflectionTexture)reflectiveGlass.add(material);}
         else{material.environmentIntensity = 1.7;material.roughness = Math.max(material.roughness ?? 0.12, 0.12);}
       }
     }
