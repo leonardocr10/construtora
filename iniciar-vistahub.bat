@@ -82,11 +82,16 @@ call npm run prisma:generate
 if errorlevel 1 goto :failed
 call npm run db:init
 if errorlevel 1 goto :failed
+rem Visualizador compilado: poucos arquivos minificados em vez das centenas de modulos do modo desenvolvimento
+rem (abre bem mais rapido para quem acessa de fora). Para desenvolver com recarga automatica: npm run dev:viewer.
+echo Compilando o visualizador 3D...
+call npm run build:viewer
+if errorlevel 1 goto :failed
 
 echo Abrindo API e painel...
 start "VistaHub API" /D "%~dp0" cmd /k npm run dev:api
 start "VistaHub Painel" /D "%~dp0" cmd /k npm run dev:admin
-start "VistaHub Visualizador 3D" /D "%~dp0" cmd /k npm run dev:viewer
+start "VistaHub Visualizador 3D" /D "%~dp0" cmd /k npm run serve:viewer
 
 echo Aguardando a API responder...
 powershell -NoProfile -Command "for($i=0;$i -lt 60;$i++){ try { Invoke-WebRequest -UseBasicParsing http://localhost:3000/api/v1/health/db -TimeoutSec 2 | Out-Null; exit 0 } catch { Start-Sleep 2 } }; exit 1"

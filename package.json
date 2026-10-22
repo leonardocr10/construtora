@@ -10,6 +10,8 @@
     "dev:api": "npm run start:dev --workspace=@vistahub/api",
     "dev:admin": "npm run start --workspace=@vistahub/admin-web",
     "dev:viewer": "npm run start --workspace=@vistahub/viewer",
+    "build:viewer": "npm run build --workspace=@vistahub/viewer",
+    "serve:viewer": "npm run preview --workspace=@vistahub/viewer",
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "prisma:generate": "npm run prisma:generate --workspace=@vistahub/api",
