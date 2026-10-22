@@ -148,7 +148,8 @@ function renderViews() {
   world.onQualityChange((level) => { select.value = level; });
 }
 
-let viewsCollapsed = (() => { try { return localStorage.getItem('vistahub.views') === 'closed'; } catch { return false; } })();
+// Recolhido por padrão (a maquete ocupa a tela); abre só se o visitante deixou aberto da última vez.
+let viewsCollapsed = (() => { try { return localStorage.getItem('vistahub.views') !== 'open'; } catch { return true; } })();
 
 /** Bússola: a agulha aponta para o norte real (-z no mapa) conforme a câmera gira; clique alinha o norte para cima. */
 function bindCompass() {
