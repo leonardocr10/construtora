@@ -19,7 +19,7 @@
     "db:export": "node scripts/db-export.mjs",
     "db:restore": "node scripts/db-restore.mjs",
     "db:check": "node scripts/check-database.mjs",
-    "db:status": "dotenv -e .env -- prisma migrate status --schema prisma/schema.prisma",
+    "db:status": "node scripts/with-env.mjs .env prisma migrate status --schema prisma/schema.prisma",
     "provision:admin": "node scripts/provision-admin.mjs",
     "seed:demo": "node scripts/seed-demo.mjs",
     "postinstall": "npm run build --workspace=@vistahub/geo"

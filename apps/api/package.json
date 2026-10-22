@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "start": "dotenv -e ../../.env -- nest start",
-    "start:dev": "dotenv -e ../../.env -- nest start --watch",
+    "start": "node ../../scripts/with-env.mjs ../../.env nest start",
+    "start:dev": "node ../../scripts/with-env.mjs ../../.env nest start --watch",
     "build": "nest build",
     "provision:admin": "node ../../scripts/provision-admin.mjs",
-    "prisma:generate": "dotenv -e ../../.env -- prisma generate --schema ../../prisma/schema.prisma",
-    "prisma:migrate": "dotenv -e ../../.env -- prisma migrate dev --skip-generate --schema ../../prisma/schema.prisma",
-    "prisma:deploy": "dotenv -e ../../.env -- prisma migrate deploy --schema ../../prisma/schema.prisma",
-    "test": "tsc -p tsconfig.test.json && dotenv -e ../../.env -- node --test test/tower-glb.test.mjs"
+    "prisma:generate": "node ../../scripts/with-env.mjs ../../.env prisma generate --schema ../../prisma/schema.prisma",
+    "prisma:migrate": "node ../../scripts/with-env.mjs ../../.env prisma migrate dev --skip-generate --schema ../../prisma/schema.prisma",
+    "prisma:deploy": "node ../../scripts/with-env.mjs ../../.env prisma migrate deploy --schema ../../prisma/schema.prisma",
+    "test": "tsc -p tsconfig.test.json && node ../../scripts/with-env.mjs ../../.env node --test test/tower-glb.test.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.0",
