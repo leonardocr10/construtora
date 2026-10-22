@@ -11,13 +11,14 @@ export const dumpFile = join(root, 'database', 'vistahub.sql');
 /** Caminho de um executável do MySQL (mysql, mysqldump): PATH ou pastas padrão do instalador no Windows. */
 export function mysqlTool(name) {
   const exe = process.platform === 'win32' ? `${name}.exe` : name;
+  if (process.env.MYSQL_BIN && existsSync(join(process.env.MYSQL_BIN, exe))) return join(process.env.MYSQL_BIN, exe);
   if (spawnSync(exe, ['--version'], { stdio: 'ignore' }).status === 0) return exe;
-  const bases = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter(Boolean);
-  for (const base of bases) for (const version of ['8.4', '8.0', '9.0', '9.1']) {
-    const candidate = join(base, 'MySQL', `MySQL Server ${version}`, 'bin', exe);
-    if (existsSync(candidate)) return candidate;
+  // Windows: mesma busca do iniciar-vistahub.bat (serviço do mysqld, MySQL, MariaDB, XAMPP, Laragon, Wamp).
+  if (process.platform === 'win32') {
+    const found = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(root, 'scripts', 'find-mysql.ps1')], { encoding: 'utf8' }).stdout?.trim();
+    if (found && existsSync(join(found, exe))) return join(found, exe);
   }
-  console.error(`Não encontrei o ${name}. Instale o MySQL Server 8 ou coloque a pasta bin dele no PATH.`);
+  console.error(`Não encontrei o ${name}. Coloque a pasta bin do MySQL em MYSQL_BIN no .env (ou no PATH).`);
   process.exit(1);
 }
 

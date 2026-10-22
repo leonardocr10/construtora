@@ -27,7 +27,7 @@ rem O cmd interpreta %% em valores de URL. Carregamos somente as credenciais usa
 rem Prisma le DATABASE_URL e SHADOW_DATABASE_URL diretamente do arquivo .env.
 set "DATABASE_URL="
 set "SHADOW_DATABASE_URL="
-for /f "tokens=1,* delims==" %%A in ('findstr /R /B /C:"MYSQL_DATABASE=" /C:"MYSQL_USER=" /C:"MYSQL_PASSWORD=" /C:"MYSQL_ROOT_PASSWORD=" ".env"') do set "%%A=%%B"
+for /f "tokens=1,* delims==" %%A in ('findstr /R /B /C:"MYSQL_DATABASE=" /C:"MYSQL_USER=" /C:"MYSQL_PASSWORD=" /C:"MYSQL_ROOT_PASSWORD=" /C:"MYSQL_BIN=" ".env"') do set "%%A=%%B"
 
 where mysql >nul 2>nul
 if errorlevel 1 call :find_mysql
@@ -128,7 +128,7 @@ exit /b 0
 echo MySQL nao encontrado. Tentando instalar MySQL 8 pelo winget...
 where winget >nul 2>nul
 if errorlevel 1 (
-  echo [ERRO] winget nao esta disponivel. Instale MySQL Server 8 manualmente.
+  echo [ERRO] winget nao esta disponivel. Se o MySQL ja esta instalado, coloque a pasta bin dele em MYSQL_BIN no .env.
   exit /b 1
 )
 winget install --id Oracle.MySQL --exact --accept-source-agreements --accept-package-agreements
@@ -137,7 +137,6 @@ echo MySQL instalado. Conclua o assistente, defina a senha root no .env e execut
 exit /b 0
 
 :find_mysql
-for %%D in ("%ProgramFiles%\MySQL\MySQL Server 8.4\bin" "%ProgramFiles%\MySQL\MySQL Server 8.0\bin" "%ProgramFiles(x86)%\MySQL\MySQL Server 8.4\bin" "%ProgramFiles(x86)%\MySQL\MySQL Server 8.0\bin") do (
-  if exist "%%~D\mysql.exe" set "PATH=%%~D;%PATH%"
-)
+rem MYSQL_BIN do .env, servico do Windows (mysqld/mariadbd) ou instalacoes comuns (MySQL, MariaDB, XAMPP, Laragon, Wamp).
+for /f "usebackq delims=" %%D in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\find-mysql.ps1" -Hint "%MYSQL_BIN%"`) do set "PATH=%%D;%PATH%"
 exit /b 0
