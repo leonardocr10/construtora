@@ -1,4 +1,4 @@
-import { Color3, HDRCubeTexture, KhronosTextureContainer2, LoadAssetContainerAsync, Matrix, Mesh, PBRMaterial, Texture, TransformNode, Vector3, type AssetContainer, type Scene } from './babylon';
+import { Color3, HDRCubeTexture, KhronosTextureContainer2, LoadAssetContainerAsync, Matrix, Mesh, MeshoptCompression, PBRMaterial, Texture, TransformNode, Vector3, type AssetContainer, type Scene } from './babylon';
 
 /**
  * Biblioteca de assets gerada no Blender (scripts/blender/build_library.py, em /library): texturas PBR sem
@@ -58,6 +58,7 @@ export class Library {
   }
 
   static async load(scene: Scene, base = '/library/'): Promise<Library | null> {
+    MeshoptCompression.Configuration.decoder.url = '/meshopt/meshopt_decoder.js';
     Library.useLocalKtx2Decoder();
     try {
       const response = await fetch(`${base}library.json`);
@@ -90,6 +91,8 @@ export class Library {
    */
   /** Metros cobertos por uma repetição do conjunto (para dividir a UV em metros). */
   tileMeters(set: string) { return this.catalog.textures?.[set]?.meters ?? 1; }
+
+  hasTexture(set: string) { return !!this.catalog.textures?.[set]; }
 
   material(name: string, set: string, options: { color?: Color3; roughness?: number } = {}) {
     const info = this.catalog.textures?.[set];

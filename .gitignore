@@ -10,3 +10,6 @@ coverage/
 
 # Saída do comparativo da maquete (scripts/bench/viewer-bench.mjs)
 bench-out/
+
+# Derivadas de entrega: cache reconstruivel, nunca os modelos originais.
+storage/.viewer-cache/

@@ -35,6 +35,7 @@ export { LoadAssetContainerAsync } from '@babylonjs/core/Loading/sceneLoader';
 export type { AssetContainer } from '@babylonjs/core/assetContainer';
 export { HDRCubeTexture } from '@babylonjs/core/Materials/Textures/hdrCubeTexture';
 export { KhronosTextureContainer2 } from '@babylonjs/core/Misc/khronosTextureContainer2';
+export { MeshoptCompression } from '@babylonjs/core/Meshes/Compression/meshoptCompression';
 export { Material as MaterialBase } from '@babylonjs/core/Materials/material';
 
 // Efeitos colaterais: instâncias finas, picking, sombras, camadas, pré-passe (SSAO2) e pipelines.

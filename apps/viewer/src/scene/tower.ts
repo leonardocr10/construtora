@@ -3,6 +3,7 @@ import '@babylonjs/core/Rendering/edgesRenderer';
 import type { Library } from './library';
 import {configureFacadeGlass,glassReflection} from './facade-glass';
 import {applyFacadePalette} from './facade-materials';
+import {buildFacadeDetails} from './facade-details';
 import { box as boxGeo, compose, instanced, merge, meshFrom, offsetLightness, pbr, rgb, shadows, translate } from './geometry';
 import type { Building, TowerModel, UnitSlot, UnitStatus } from '../types';
 
@@ -69,7 +70,7 @@ function localBox(meshes: Mesh[], node: TransformNode): SolidBox | null {
  * Torre paramétrica: corpo com janelas por pavimento, núcleo de circulação e varandas na cor de destaque,
  * e um volume clicável por apartamento (posição definida pelo final em model3d.unitSlots).
  */
-export function buildTower(scene: Scene, building: Building, parent: TransformNode, glbUrl: string | null = null, library: Library | null = null): TowerObject {
+export function buildTower(scene: Scene, building: Building, parent: TransformNode, glbUrl: string | null = null, library: Library | null = null, refined = false, schedule: <T>(job: () => Promise<T>) => Promise<T> = job => job()): TowerObject {
   const model: TowerModel = building.model3d ?? { width: 32, depth: 16 };
   const floors = building.floorCount ?? (Math.max(...building.units.map((u) => u.floor ?? 0), 0) + 1);
   const h = building.floorHeight ?? 2.9;
@@ -276,13 +277,15 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
     for(const m of litMaterials)m.emissiveIntensity=dusk*1.6*(contextMuted ? .25 : 1);
     for(const m of interiorLights)m.emissiveIntensity=(.05+dusk*1.8)*(contextMuted?.3:1);
     for(const m of interiorLitWalls)m.emissiveIntensity=(.025+dusk*.35)*(contextMuted?.3:1);
-    const sky=glassReflection(scene,dusk>.5?'sunset':'day');
-    for(const m of reflectiveGlass)if(m.reflectionTexture!==sky)m.reflectionTexture=sky;
+    if(reflectiveGlass.size){
+      const sky=glassReflection(scene,dusk>.5?'sunset':'day',refined);
+      for(const m of reflectiveGlass)if(m.reflectionTexture!==sky)m.reflectionTexture=sky;
+    }
   };
 
   // Modelo detalhado do Blender (scripts/blender/build_tower.py): substitui o corpo paramétrico. Os volumes por
   // apartamento, as faixas de pavimento, a torre recortada e a caixa de clique continuam os daqui.
-  const loaded = glbUrl ? (async () => {
+  const loaded = glbUrl ? schedule(async () => {
     const container = await LoadAssetContainerAsync(glbUrl, scene, { pluginExtension: '.glb' });
     container.addAllToScene();
     for (const node of container.transformNodes) if (/-units$/.test(node.name)) node.dispose(false, true);
@@ -290,6 +293,8 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
     root.parent = group;
     const visual = root.getChildMeshes(false).filter((m): m is Mesh => m instanceof Mesh && !m.isDisposed() && m.getTotalVertices() > 0);
     const hasInteriors=visual.some(m=>/-interior-shell/.test(m.name));
+    if(refined)visual.push(...buildFacadeDetails(scene,visual,group,library?.lodScale??1));
+    const finish = refined && library?.hasTexture('pilot_paint') ? library.material(`${id}-micro-finish`,'pilot_paint') : null;
     for (const mesh of visual) {
       shadows(mesh, true); mesh.isPickable = false;
       // Caixilhos, guarda-corpos e juntas somem ao longe (são finos demais para aparecer e custam muitos triângulos).
@@ -300,6 +305,13 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
       applyFacadePalette(material,model);
       // Pintura lisa: o albedo "paint" tem manchas de ~1–2 m que, de perto, parecem sombra suja na fachada.
       if (/^VH_(Wall|Tone\d+|Trim|Accent)$/.test(material.name) ) material.albedoTexture = null;
+      if(finish && /^VH_(Wall|Tone\d+|Trim|Accent)$/.test(material.name)){
+        // UV planar do gerador ja representa 2 m, como o novo acabamento.
+        material.bumpTexture=finish.bumpTexture;material.metallicTexture=finish.metallicTexture;
+        material.useRoughnessFromMetallicTextureGreen=true;material.useRoughnessFromMetallicTextureAlpha=false;
+        material.useMetallnessFromMetallicTextureBlue=true;material.useAmbientOcclusionFromMetallicTextureRed=true;
+        material.invertNormalMapX=false;material.invertNormalMapY=false;
+      }
       if (material.name === 'VH_GlassLit'&&!hasInteriors) { material.emissiveColor = rgb(0xffc56a); material.emissiveIntensity = dusk * 1.6; if (!litMaterials.includes(material)) litMaterials.push(material); }
       if(/^VH_Interior/.test(material.name)){
         material.environmentIntensity=.6;material.directIntensity=.72;material.emissiveColor=material.albedoColor.scale(.025);material.emissiveIntensity=1;
@@ -309,7 +321,7 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
       }
       if (/^VH_(Tone|Wall|Accent|Trim|Roof)/.test(material.name) && !tintable.has(material)) tintable.set(material, material.albedoColor.clone());
       if (/^VH_Glass/.test(material.name)) {
-        if(hasInteriors){configureFacadeGlass(material,mesh,model.facade?.glass);if(material.reflectionTexture)reflectiveGlass.add(material);}
+        if(hasInteriors){configureFacadeGlass(material,mesh,model.facade?.glass,refined);if(material.reflectionTexture)reflectiveGlass.add(material);}
         else{material.environmentIntensity = 1.7;material.roughness = Math.max(material.roughness ?? 0.12, 0.12);}
       }
     }
@@ -321,7 +333,7 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
     if (shell) solidBoxes = [shell, ...(balcony ? [balcony] : [])];
     rememberBody();applyBodyTone();
     applyCut();
-  })().catch((error) => console.warn(`Modelo 3D da torre ${building.name} indisponível; usando o paramétrico`, error)) : Promise.resolve();
+  }).catch((error) => console.warn(`Modelo 3D da torre ${building.name} indisponível; usando o paramétrico`, error)) : Promise.resolve();
 
   return {
     building, group, top, center, height: H, unitMeshes, floorBands, pickables: [hit, ...unitMeshes.values()], loaded,

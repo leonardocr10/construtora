@@ -4,8 +4,7 @@ import { Vector3, type AbstractMesh } from './scene/babylon';
 import { World } from './scene/world';
 import { Library } from './scene/library';
 import { buildSite, type SiteResult } from './scene/site';
-import { buildSurroundings } from './scene/surroundings';
-import { InteriorViewer } from './scene/interior';
+import type { InteriorViewer } from './scene/interior';
 import { bindTowerHover } from './scene/hover';
 import { defaultSlots, type TowerObject } from './scene/tower';
 import { qualityLevels, qualityOrder, type QualityLevel } from './scene/quality';
@@ -19,6 +18,7 @@ const area = (n: number | null) => (n == null ? '—' : `${n.toLocaleString('pt-
 const money = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 
 const slug = new URLSearchParams(location.search).get('empreendimento') ?? (location.pathname.split('/').filter(Boolean)[0] || 'union-vista');
+performance.setResourceTimingBufferSize(2000);
 
 interface State { tower: TowerObject | null; floor: number | null; unit: Unit | null; amenities: boolean }
 const state: State = { tower: null, floor: null, unit: null, amenities: false };
@@ -51,8 +51,9 @@ async function start() {
   // Biblioteca do Blender (céu HDR, texturas PBR, vegetação e carros); sem ela, a cena usa a geometria gerada aqui.
   const library = await Library.load(world.scene);
   if (library) world.useLibrary(library);
+  world.setArchitecturalLighting(dev.slug === 'union-vista' && new URLSearchParams(location.search).get('acabamento') !== 'original');
   const siteImage = dev.viewer.layout?.siteImageAssetId ? api.assetUrl(dev.viewer.layout.siteImageAssetId) : null;
-  const towerModels = new Map(dev.buildings.filter((b) => b.model3d?.glb?.assetId).map((b) => [b.id, api.assetUrl(b.model3d!.glb!.assetId)] as const));
+  const towerModels = new Map(dev.buildings.filter((b) => b.model3d?.glb?.assetId).map((b) => [b.id, api.modelUrl(b.model3d!.glb!.assetId)] as const));
   site = buildSite(world.scene, dev, siteImage, library, towerModels);
   world.onDusk((t) => { for (const tower of site.towers) tower.setDusk(t); });
   // A câmera não entra nas torres: a aproximação para na fachada (na janela).
@@ -64,16 +65,28 @@ async function start() {
   bindPicking();
   hover = bindTowerHover(world, site.towers, () => state.tower);
   bindCompass();
-  const inspect: { world: World; site: SiteResult; readyAt?: number } = { world, site };
+  const inspect: { world: World; site: SiteResult; interactiveAt?: number; readyAt?: number } = { world, site };
   // Inspeção no navegador: no desenvolvimento e, em produção, com ?medir (scripts/bench/viewer-bench.mjs).
   if (import.meta.env.DEV || new URLSearchParams(location.search).has('medir')) Object.assign(window, { __vista: inspect });
   overview(0.01);
 
-  $('loading-text').textContent = 'Carregando o entorno real (OpenStreetMap)';
+  $('loading-text').textContent = 'Preparando o terreno';
   const renderer = world.webgpu ? 'WebGPU' : 'WebGL2';
+  $('sources').textContent = 'Carregando detalhes e entorno…';
+  // Entorno e detalhes nao bloqueiam o primeiro quadro navegavel.
+  const surroundingsReady = (async () => {
+  await site.baseReady;
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   try {
+    const { buildSurroundings } = await import('./scene/surroundings');
     const surroundings = await api.surroundings(slug);
-    const result = buildSurroundings(world.scene, surroundings, site.lotWorld, qualityLevels[world.quality].trees);
+    const pilotTower=dev.buildings.find(b=>b.code==='TORRE-03');
+    const pilotInverse=site.group.getWorldMatrix().clone().invert();
+    const pilotDetail=slug==='union-vista'&&library?.has('pilot_tree_vertical')&&pilotTower?.position&&new URLSearchParams(location.search).get('vegetacao')!=='original'?{
+      library,contains:(p:Point)=>{const v=Vector3.TransformCoordinates(new Vector3(p[0],0,p[1]),pilotInverse),b=pilotTower.position!,a=(b.rotation??0)*Math.PI/180,dx=v.x-b.x,dz=v.z-b.z;return Math.abs(Math.cos(a)*dx+Math.sin(a)*dz)<(pilotTower.model3d?.width??36)/2+18&&Math.abs(-Math.sin(a)*dx+Math.cos(a)*dz)<(pilotTower.model3d?.depth??16.8)/2+40;},
+    }:undefined;
+    const result = buildSurroundings(world.scene, surroundings, site.lotWorld, qualityLevels[world.quality].trees,pilotDetail);
+    await result.ready;
     // Entorno é estático: matrizes congeladas (menos trabalho por quadro).
     for (const mesh of result.group.getChildMeshes()) mesh.freezeWorldMatrix();
     const own = new Set(site.roadAnchors.map((r) => r.name.split(',')[0].toLowerCase()));
@@ -86,12 +99,23 @@ async function start() {
   } catch {
     $('sources').innerHTML = `Entorno indisponível no momento <em>${renderer}</em>`;
   }
-  await site.ready;
-  // Marca de tempo para as medições de carregamento (scripts/bench/viewer-bench.mjs).
-  inspect.readyAt = performance.now();
+  })();
+  await site.baseReady;
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  inspect.interactiveAt = performance.now();
   $('loading').style.opacity = '0';
   setTimeout(() => $('loading').remove(), 500);
   if (dev.viewer.lighting?.mode === 'sunset') setMode('sunset');
+  // Enquadramento de revisao identico para comparar o jardim, sem alterar a camera padrao do empreendimento.
+  if(slug==='union-vista'&&new URLSearchParams(location.search).get('cena')==='jardim-torre3'){
+    const target=new Vector3(28,2,-32),eye=new Vector3(62,28,-68);
+    if(innerWidth<=760)eye.copyFrom(target.add(eye.subtract(target).scale(1.5)));
+    const matrix=site.group.computeWorldMatrix(true);
+    void world.flyTo(Vector3.TransformCoordinates(eye,matrix),Vector3.TransformCoordinates(target,matrix),.1);
+  }
+  await Promise.all([site.ready, surroundingsReady]);
+  // Mantem a medida completa separada do primeiro quadro interativo.
+  inspect.readyAt = performance.now();
 }
 
 function renderChrome() {
@@ -559,11 +583,20 @@ function showPlan(plan: FloorPlan, unit?: Unit) {
 
 /** Planta 3D mobiliada em tela cheia (maquete e passeio em primeira pessoa); a maquete pausa enquanto isso. */
 let interior: InteriorViewer | null = null;
-function openInterior(plan: FloorPlan, unit?: Unit) {
-  if (!plan.layout || interior) return;
+let interiorOpening = false;
+async function openInterior(plan: FloorPlan, unit?: Unit) {
+  if (!plan.layout || interior || interiorOpening) return;
+  interiorOpening = true;
   const subtitle = [unit ? `Apartamento ${unit.number}` : null, area(unit?.privateArea ?? plan.area), plan.bedrooms ? `${plan.bedrooms} quartos` : null].filter(Boolean).join(' · ');
-  world.paused = true;
-  interior = new InteriorViewer(plan.layout, { title: plan.name, subtitle, onClose: () => { interior = null; world.paused = false; } });
+  try {
+    const { InteriorViewer } = await import('./scene/interior');
+    world.paused = true;
+    interior = new InteriorViewer(plan.layout, { title: plan.name, subtitle, onClose: () => { interior = null; world.paused = false; } });
+  } catch (error) {
+    world.paused = false;
+    console.error('Passeio indisponivel', error);
+    openModal('<div class="side"><h3>Nao foi possivel abrir o passeio</h3><p>Verifique a conexao e tente novamente.</p></div>', true);
+  } finally { interiorOpening = false; }
 }
 
 function about() {

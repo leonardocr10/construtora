@@ -25,12 +25,17 @@
     "db:status": "node scripts/with-env.mjs .env prisma migrate status --schema prisma/schema.prisma",
     "provision:admin": "node scripts/provision-admin.mjs",
     "seed:demo": "node scripts/seed-demo.mjs",
-    "postinstall": "npm run build --workspace=@vistahub/geo"
+    "postinstall": "npm run build --workspace=@vistahub/geo && node scripts/viewer/sync-meshopt.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
     "@gltf-transform/cli": "^4.5.1"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "meshoptimizer": "1.2.0"
   }
 }

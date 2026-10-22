@@ -51,14 +51,13 @@ export function isMobile() {
 
 /**
  * Nível inicial sem escolha do visitante: GPU por software → econômico; celular → econômico ou
- * equilibrado (aparelhos com bastante memória e núcleos); computador → Ultra (Alta ou Média se modesto).
+ * equilibrado (aparelhos com bastante memória e núcleos); computador → Alta ou Média. Ultra e opcional.
  */
 export function detectQuality(gpu: string): QualityLevel {
   if (/swiftshader|llvmpipe|softpipe|basic render|software/.test(gpu)) return 'eco';
   const cores = navigator.hardwareConcurrency ?? 4;
   const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
   if (isMobile()) return cores >= 8 && memory >= 6 ? 'balanced' : 'eco';
-  // Computador: o máximo (Ultra) quando há folga; se a taxa de quadros cair, o visualizador rebaixa sozinho.
-  if (cores <= 4 || memory <= 4) return 'balanced';
-  return cores >= 8 && memory >= 8 ? 'ultra' : 'high';
+  // Nao iniciar em Ultra so pelo numero de nucleos; a escolha salva continua sendo respeitada.
+  return cores >= 8 && memory >= 8 ? 'high' : 'balanced';
 }

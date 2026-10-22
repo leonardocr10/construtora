@@ -22,6 +22,8 @@ export interface VegetationInput {
   random: () => number;
   /** Teto de árvores (pelo nível de qualidade): as de calçada entram primeiro, os maciços completam. */
   maxTrees: number;
+  /** Troca somente arvores proximas da cena-piloto, sem alterar a distribuicao restante. */
+  detail?: {contains:(p:Point)=>boolean;place:(p:Point,height:number,spin:number)=>void};
 }
 
 function inside([x, z]: Point, polygon: Point[]) {
@@ -101,12 +103,15 @@ export function buildVegetation(scene: Scene, parent: TransformNode, input: Vege
     const trunks: Matrix[] = [], matrices: Matrix[] = [], colors: Color3[] = [];
     for (const [x, z, size] of list) {
       const height = size * 0.75, spin = random() * Math.PI * 2;
-      trunks.push(compose(x, 0, z, 0, spin, 0, size * 0.45, height, size * 0.45));
       const s = size * (0.95 + random() * 0.25);
-      matrices.push(compose(x, height + s * 0.55, z, (random() - 0.5) * 0.2, spin, (random() - 0.5) * 0.2, s, s * (0.8 + random() * 0.25), s));
+      const matrix=compose(x, height + s * 0.55, z, (random() - 0.5) * 0.2, spin, (random() - 0.5) * 0.2, s, s * (0.8 + random() * 0.25), s);
       // Verdes de cerrado urbano: do oliva seco ao verde-escuro de mangueira e oiti.
-      colors.push(hsl(0.2 + random() * 0.1, 0.32 + random() * 0.2, 0.22 + random() * 0.1));
+      const color=hsl(0.2 + random() * 0.1, 0.32 + random() * 0.2, 0.22 + random() * 0.1);
+      // Consome o mesmo ruido: nenhuma outra arvore muda de cor/posicao.
+      if(input.detail?.contains([x,z])){input.detail.place([x,z],height+s*1.4,spin);continue;}
+      trunks.push(compose(x,0,z,0,spin,0,size*.45,height,size*.45));matrices.push(matrix);colors.push(color);
     }
+    if(!matrices.length)continue;
     shadows(instanced(`vegetation-trunks-${name}`, trunk, scene, trunkMaterial, trunks, group), cast, false);
     shadows(instanced(`vegetation-crowns-${name}`, crowns[name], scene, crownMaterial, matrices, group, colors), cast, true);
   }

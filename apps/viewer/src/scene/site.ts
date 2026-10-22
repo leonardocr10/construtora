@@ -1,4 +1,4 @@
-import { DynamicTexture, PBRMaterial, TransformNode, Vector3, type Scene } from './babylon';
+import { Color3, DynamicTexture, PBRMaterial, TransformNode, Vector3, type Scene } from './babylon';
 import type { Library } from './library';
 import type { Development, Point, SiteLayout } from '../types';
 import { buildTower, type TowerObject } from './tower';
@@ -9,6 +9,8 @@ import { buildVectorGround } from './ground-vector';
 import { buildPlanGround } from './ground-plan';
 import { planParking } from './parking';
 import { buildPalms, buildTrees } from './trees';
+import {pilotModels,planPilotLandscape} from './pilot-landscape';
+import {createLoadQueue} from './load-queue';
 import { box, compose, merge, meshFrom, pbr, polygon, prism, shadows, transform, type Geo } from './geometry';
 
 /** Converte pixels da implantação para metros no referencial do terreno (antes da rotação do azimute). */
@@ -150,6 +152,8 @@ export interface SiteResult {
   amenityAnchors: Map<string, Vector3>; roadAnchors: { name: string; position: Vector3 }[];
   /** Resolve quando o chão, os carros, a vegetação e os modelos das torres terminaram de carregar. */
   ready: Promise<void>;
+  /** Chao navegavel pronto; nao espera os GLB detalhados nem vegetacao/carros. */
+  baseReady: Promise<void>;
 }
 
 /**
@@ -232,18 +236,20 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
           // faixas pintadas e linhas das vagas numa camada transparente por cima do asfalto.
           const art = new DynamicTexture('lot-art', painted.canvas, scene, true);
           art.anisotropicFilteringLevel = 16; art.update(true);
+          const refined = development.slug === 'union-vista' && new URLSearchParams(location.search).get('acabamento') !== 'original';
+          const surface = (name: string) => refined && library.hasTexture(`pilot_${name}`) ? `pilot_${name}` : name;
           const materials: Record<number, PBRMaterial> = {
-            1: library.material('lot-asphalt', 'asphalt'), 2: library.material('lot-grass', 'grass'), 3: library.material('lot-paving', 'paving'),
+            1: library.material('lot-asphalt', surface('asphalt')), 2: library.material('lot-grass', surface('grass')), 3: library.material('lot-paving', surface('paving')),
           };
           const other = pbr(scene, 'lot-other', { color: 0xffffff, roughness: 0.95 }); other.albedoTexture = art;
           const tiled = (geo: Geo, meters: number) => ({ ...geo, uvs: geo.uvs.map((v) => v / meters) });
           // Asfalto: o polígono do lote inteiro. Por cima, o chão elevado em contornos vetoriais suavizados.
           const base = polygon(lot, asphaltLevel);
-          shadows(meshFrom('lot-asphalt', tiled(base, library.tileMeters('asphalt')), scene, materials[1], group), false).freezeWorldMatrix();
+          shadows(meshFrom('lot-asphalt', tiled(base, library.tileMeters(surface('asphalt'))), scene, materials[1], group), false).freezeWorldMatrix();
           const vector = plan ? buildPlanGround(layout.lot!, plan, (p) => pixelToSite(layout, p)) : buildVectorGround(ground, (p) => pixelToSite(layout, p));
           const top = (name: string, geo: Geo | null, material: PBRMaterial, set?: string) => {
             if (!geo) return;
-            shadows(meshFrom(name, set ? tiled(geo, library.tileMeters(set)) : { ...geo, uvs: artUv(geo, ground, layout) }, scene, material, group), false).freezeWorldMatrix();
+            shadows(meshFrom(name, set ? tiled(geo, library.tileMeters(surface(set))) : { ...geo, uvs: artUv(geo, ground, layout) }, scene, material, group), false).freezeWorldMatrix();
           };
           top('lot-paving', vector.raised, materials[3], 'paving');
           top('lot-grass', vector.grass, materials[2], 'grass');
@@ -255,8 +261,8 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
           markMaterial.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHATEST; markMaterial.alphaCutOff = 0.4;
           markMaterial.zOffset = -2; // fica por cima do asfalto sem levantar a malha
           shadows(meshFrom('lot-marks', { ...base, uvs: artUv(base, ground, layout) }, scene, markMaterial, group), false).isPickable = false;
-          const curb = library.material('curb', 'concrete'); curb.backFaceCulling = false;
-          shadows(meshFrom('lot-curbs', tiled(vector.curbs, library.tileMeters('concrete')), scene, curb, group), false);
+          const curb = library.material('curb', surface('concrete')); curb.backFaceCulling = false;
+          shadows(meshFrom('lot-curbs', tiled(vector.curbs, library.tileMeters(surface('concrete'))), scene, curb, group), false);
           const tasks: Promise<unknown>[] = [];
           const carModels = ['car_hatch', 'car_sedan', 'car_suv'];
           const jitter = (seed: number, k: number) => { const t = Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453; return t - Math.floor(t) - 0.5; };
@@ -270,10 +276,19 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
             })), { parent: group, chunk: 90, lodDistance: 140, cull: 900, shadowLevels: 1, tint: (name) => name === 'VH_CarPaint' }));
           });
           const random = seededRandom(17);
-          if (trees.length) tasks.push(library.instances('tree_broadleaf', place(trees).map(([x, z, size]) => {
+          const pilot=pilotModels.every(model=>library.has(model))&&new URLSearchParams(location.search).get('vegetacao')!=='original'?planPilotLandscape(development,ground):null;
+          const regularTrees=pilot?trees.filter(([x,z])=>!pilot.replaces([x,z])):trees;
+          if (regularTrees.length) tasks.push(library.instances('tree_broadleaf', place(regularTrees).map(([x, z, size]) => {
             const s = (size * 1.7) / 6.6 * (0.9 + random() * 0.25);
             return { matrix: compose(x, asphaltLevel + curbHeight, z, 0, random() * Math.PI * 2, 0, s, s * (0.9 + random() * 0.2), s) };
           }), { parent: group, chunk: 120, lodDistance: 170, cull: 1600 }));
+          if(pilot){
+            group.metadata={...group.metadata,vegetationPilot:{version:1,tower:'TORRE-03',bounds:pilot.bounds,plants:pilot.plants}};
+            for(const model of pilotModels){
+              const list=pilot.plants.filter(p=>p.model===model);if(!list.length)continue;
+              tasks.push(library.instances(model,list.map((p,i)=>({matrix:compose(p.point[0],asphaltLevel+curbHeight,p.point[1],0,p.yaw,0,p.scale,p.yScale,p.scale),color:new Color3(.9+(i%3)*.04,.94+(i%2)*.04,.86+(i%4)*.04)})),{parent:group,chunk:80,lodDistance:model.startsWith('pilot_tree')?130:55,cull:model.startsWith('pilot_tree')?700:280,shadowLevels:model.startsWith('pilot_tree')?2:1,tint:name=>name.startsWith('VH_Leaf')}));
+            }
+          }
           if (palms.length) tasks.push(library.instances('tree_palm', palms.map(([x, z, height]) => {
             const s = height / 9 * (0.96 + random() * 0.08);
             return { matrix: compose(x, asphaltLevel + curbHeight, z, 0, random() * Math.PI * 2, 0, s, s, s) };
@@ -289,6 +304,7 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
                 const edge = !plantingFits([px,py], 1.55);
                 if (!edge || [...trees,...palmPixels].some(([tx,ty]) => Math.hypot(tx-px,ty-py) * layout.metersPerPixel < 1.35)) continue;
                 const [x,z] = pixelToSite(layout,[px,py]); const s = 0.38 + random() * 0.22;
+                if(pilot?.plants.some(p=>!p.model.startsWith('pilot_tree')&&Math.hypot(p.point[0]-x,p.point[1]-z)<2))continue;
                 shrubs.push({matrix:compose(x,asphaltLevel+curbHeight,z,0,random()*Math.PI*2,0,s,s*0.8,s)});
               }
             }
@@ -318,7 +334,9 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
   }
 
   if (!layout?.lot?.length || !siteImageUrl) resolveSite();
-  const towers = development.buildings.map((building) => buildTower(scene, building, group, towerModels.get(building.id) ?? null, library));
+  const refineFacade = development.slug === 'union-vista' && new URLSearchParams(location.search).get('acabamento') !== 'original';
+  const scheduleTower = createLoadQueue(2);
+  const towers = development.buildings.map((building) => buildTower(scene, building, group, towerModels.get(building.id) ?? null, library, refineFacade && building.code === 'TORRE-03', scheduleTower));
   for (const tower of towers) readyTasks.push(tower.loaded);
   // Recalcula as âncoras já com a rotação do terreno aplicada.
   for (const tower of towers) {
@@ -339,7 +357,7 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
     return { name: road.name, position: toWorld(x, 1.5, z) };
   });
   const ready = siteLoaded.then(() => Promise.all(readyTasks)).then(() => undefined);
-  return { group, towers, lotWorld, amenityAnchors, roadAnchors, ready };
+  return { group, towers, lotWorld, amenityAnchors, roadAnchors, ready, baseReady: siteLoaded };
 }
 
 /** UV da arte (0–1 no recorte do lote) para uma malha em coordenadas do terreno. */

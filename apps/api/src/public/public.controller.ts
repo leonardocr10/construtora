@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { IsBoolean, IsEmail, IsOptional, IsString, MaxLength } from 'class-validator';
@@ -9,6 +9,8 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrganizationContext } from '../common/organization-context';
 import { assertCanEdit } from '../common/roles';
 import { PublicService } from './public.service';
+import {optimizedGlb} from './optimized-glb';
+import {storageRoot} from './public.service';
 
 class PublicLeadDto {
   @IsString() @MaxLength(160) name!: string;
@@ -47,14 +49,18 @@ export class PublicController {
   lead(@Param('slug') slug: string, @Body() body: PublicLeadDto) { return this.publicService.createLead(slug, body); }
 
   @Get('assets/:id')
-  async asset(@Param('id') id: string, @Res() response: StreamResponse, @Headers('if-none-match') etag?: string) {
-    const file = await this.publicService.asset(id);
+  async asset(@Param('id') id: string, @Res() response: StreamResponse, @Headers('if-none-match') etag?: string, @Query('optimized') optimized?: string, @Headers('accept-encoding') acceptEncoding?: string) {
+    const original = await this.publicService.asset(id);
+    const acceptsGzip = (acceptEncoding ?? '').split(',').some(part => /^gzip\s*(?:;\s*q\s*=\s*(?!0(?:\.0*)?\s*$)[\d.]+)?\s*$/i.test(part.trim()));
+    const file = optimized === '1' ? await optimizedGlb(original, storageRoot(), acceptsGzip) : original;
     const info = await stat(file.path);
     response.setHeader('Content-Type', file.mimeType);
     response.setHeader('Content-Length', String(info.size));
     response.setHeader('Cache-Control', 'public, max-age=86400');
     response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     response.setHeader('ETag', `"${file.checksum}"`);
+    if (optimized === '1') response.setHeader('Vary', 'Accept-Encoding');
+    if ('encoding' in file && file.encoding) response.setHeader('Content-Encoding', file.encoding);
     if (etag === `"${file.checksum}"`) { response.status(304).end(); return; }
     createReadStream(file.path).pipe(response as unknown as NodeJS.WritableStream);
   }

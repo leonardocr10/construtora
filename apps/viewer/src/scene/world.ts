@@ -77,6 +77,7 @@ export class World {
   /** Biblioteca de assets (céu HDR, texturas, modelos); null sem ela (cena só com geometria gerada aqui). */
   library: Library | null = null;
   private hdr: { day: BaseTexture; sunset: BaseTexture } | null = null;
+  private architecturalLighting = false;
   /** Pausa a renderização (planta 3D aberta por cima). */
   paused = false;
 
@@ -195,8 +196,30 @@ export class World {
     if (q.bloom) { pipeline.sharpen.edgeAmount = 0.14; pipeline.sharpen.colorAmount = 1; }
     pipeline.imageProcessing.exposure = this.current.exposure * acesExposure;
     this.pipeline = pipeline;
+    this.applyArchitecturalLighting();
     if (this.scene.prePassRenderer) this.scene.prePassRenderer.samples = q.msaa;
     if (this.library) { this.library.lowRes = q.lowResTextures; this.library.lodScale = q.lodScale; }
+  }
+
+  /** Refinamento opt-in: contato mais localizado e menos halo em vidro e pintura clara.
+   * Preserva exposicao, direcao solar e limites de qualidade escolhidos pelo visitante. */
+  setArchitecturalLighting(enabled: boolean) {
+    this.architecturalLighting = enabled;
+    this.applyArchitecturalLighting();
+  }
+
+  private applyArchitecturalLighting() {
+    const refined = this.architecturalLighting;
+    if (this.shadow) this.shadow.normalBias = refined ? .008 : .012;
+    if (this.ssao) {
+      this.ssao.radius = refined ? .55 : .7;
+      this.ssao.totalStrength = refined ? .35 : .45;
+    }
+    if (this.pipeline) {
+      this.pipeline.bloomThreshold = refined ? 1.1 : .82;
+      this.pipeline.bloomWeight = refined ? .08 : .14;
+    }
+    this.scene.metadata = {...this.scene.metadata, architecturalLighting: refined};
   }
 
   /**

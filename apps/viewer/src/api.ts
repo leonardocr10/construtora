@@ -15,6 +15,7 @@ export const api = {
   development: (slug: string) => get<Development>(`/public/developments/${encodeURIComponent(slug)}`),
   surroundings: (slug: string) => get<Surroundings>(`/public/developments/${encodeURIComponent(slug)}/surroundings`),
   assetUrl: (id: string) => `${base}/public/assets/${id}`,
+  modelUrl: (id: string) => `${base}/public/assets/${id}?optimized=1`,
   async lead(slug: string, body: { name: string; phone: string; email?: string; message?: string; unitId?: string; consent: boolean }) {
     const response = await fetch(`${base}/public/developments/${encodeURIComponent(slug)}/leads`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     if (!response.ok) {

@@ -38,7 +38,12 @@ function skyCube(scene:Scene,[zenith,mid,horizon,ground]:GlassSky){
 }
 
 /** Ceu de reflexo do vidro para o modo de luz (criado uma vez por cena). */
-export function glassReflection(scene:Scene,mode:'day'|'sunset'){
+export function glassReflection(scene:Scene,mode:'day'|'sunset',physical=false){
+  // Reutiliza o HDR pre-filtrado que ilumina a cena: mesma hora do dia e rugosidade filtrada.
+  // Nao e reflexo dos objetos vizinhos nem uma captura dinamica de seis faces por quadro.
+  if(physical&&scene.environmentTexture)return scene.environmentTexture;
+  // NullEngine herda getClassName() = ThinEngine; ausencia de superficie e o sinal estavel aqui.
+  if(!scene.getEngine().getRenderingCanvas())return scene.environmentTexture;
   let pair=cache.get(scene);
   if(!pair){pair={day:skyCube(scene,skies.day),sunset:skyCube(scene,skies.sunset)};cache.set(scene,pair);}
   return pair[mode];
@@ -49,7 +54,7 @@ export function glassReflection(scene:Scene,mode:'day'|'sunset'){
  * com controle solar) e ainda deixa ver o ambiente atras dele de perto. Sem o reflexo proprio, a distancia as
  * janelas liam como quadrados escuros chapados.
  */
-export function configureFacadeGlass(material:PBRMaterial,mesh?:Mesh,baseColor?:string){
+export function configureFacadeGlass(material:PBRMaterial,mesh?:Mesh,baseColor?:string,physical=false){
   const frost=material.name==='VH_GlassFrost',soft=material.name==='VH_GlassSoft',warm=material.name==='VH_GlassWarm',lit=material.name==='VH_GlassLit';
   // Tom do vidro (painel: facade.glass) clareado para a cor do reflexo; as variantes imitam persianas e cortinas.
   const tint=rgb(frost?0x8b9b8e:soft?0x597467:warm?0x625f50:baseColor??(lit?0x375047:0x294238));
@@ -58,8 +63,12 @@ export function configureFacadeGlass(material:PBRMaterial,mesh?:Mesh,baseColor?:
   material.metallic=frost?0:.4;material.roughness=frost?.48:soft?.12:.05;
   material.indexOfRefraction=1.6;
   material.environmentIntensity=frost?.22:1.1;
-  if(!frost)material.reflectionTexture=glassReflection(material.getScene(),'day');
-  material.specularIntensity=.6;
+  if(!frost)material.reflectionTexture=glassReflection(material.getScene(),'day',physical);
+  if(physical&&!frost){
+    material.metallic=.08;material.roughness=soft?.23:warm?.19:.14;
+    material.environmentIntensity=.72;
+  }
+  material.specularIntensity=physical&&!frost?.85:.6;
   material.emissiveColor.set(0,0,0);material.emissiveIntensity=0;
   material.transparencyMode=PBRMaterial.PBRMATERIAL_ALPHABLEND;
   material.backFaceCulling=false;material.twoSidedLighting=true;

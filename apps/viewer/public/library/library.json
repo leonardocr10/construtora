@@ -326,6 +326,156 @@
           }
         }
       }
+    },
+    "pilot_asphalt": {
+      "meters": 4,
+      "metal": 0,
+      "files": {
+        "albedo": {
+          "file": "textures/pilot_asphalt_albedo.webp",
+          "bytes": 168226
+        },
+        "normal": {
+          "file": "textures/pilot_asphalt_normal.webp",
+          "bytes": 132744
+        },
+        "orm": {
+          "file": "textures/pilot_asphalt_orm.webp",
+          "bytes": 50952
+        },
+        "albedo_lo": {
+          "file": "textures/pilot_asphalt_albedo_lo.webp",
+          "bytes": 9216
+        },
+        "normal_lo": {
+          "file": "textures/pilot_asphalt_normal_lo.webp",
+          "bytes": 3822
+        },
+        "orm_lo": {
+          "file": "textures/pilot_asphalt_orm_lo.webp",
+          "bytes": 3608
+        }
+      }
+    },
+    "pilot_paving": {
+      "meters": 2,
+      "metal": 0,
+      "files": {
+        "albedo": {
+          "file": "textures/pilot_paving_albedo.webp",
+          "bytes": 24166
+        },
+        "normal": {
+          "file": "textures/pilot_paving_normal.webp",
+          "bytes": 21420
+        },
+        "orm": {
+          "file": "textures/pilot_paving_orm.webp",
+          "bytes": 124886
+        },
+        "albedo_lo": {
+          "file": "textures/pilot_paving_albedo_lo.webp",
+          "bytes": 9098
+        },
+        "normal_lo": {
+          "file": "textures/pilot_paving_normal_lo.webp",
+          "bytes": 6064
+        },
+        "orm_lo": {
+          "file": "textures/pilot_paving_orm_lo.webp",
+          "bytes": 13884
+        }
+      }
+    },
+    "pilot_grass": {
+      "meters": 2,
+      "metal": 0,
+      "files": {
+        "albedo": {
+          "file": "textures/pilot_grass_albedo.webp",
+          "bytes": 277842
+        },
+        "normal": {
+          "file": "textures/pilot_grass_normal.webp",
+          "bytes": 532516
+        },
+        "orm": {
+          "file": "textures/pilot_grass_orm.webp",
+          "bytes": 16426
+        },
+        "albedo_lo": {
+          "file": "textures/pilot_grass_albedo_lo.webp",
+          "bytes": 59166
+        },
+        "normal_lo": {
+          "file": "textures/pilot_grass_normal_lo.webp",
+          "bytes": 110618
+        },
+        "orm_lo": {
+          "file": "textures/pilot_grass_orm_lo.webp",
+          "bytes": 2032
+        }
+      }
+    },
+    "pilot_concrete": {
+      "meters": 2,
+      "metal": 0,
+      "files": {
+        "albedo": {
+          "file": "textures/pilot_concrete_albedo.webp",
+          "bytes": 92356
+        },
+        "normal": {
+          "file": "textures/pilot_concrete_normal.webp",
+          "bytes": 6362
+        },
+        "orm": {
+          "file": "textures/pilot_concrete_orm.webp",
+          "bytes": 70538
+        },
+        "albedo_lo": {
+          "file": "textures/pilot_concrete_albedo_lo.webp",
+          "bytes": 3952
+        },
+        "normal_lo": {
+          "file": "textures/pilot_concrete_normal_lo.webp",
+          "bytes": 800
+        },
+        "orm_lo": {
+          "file": "textures/pilot_concrete_orm_lo.webp",
+          "bytes": 4080
+        }
+      }
+    },
+    "pilot_paint": {
+      "meters": 2,
+      "metal": 0,
+      "files": {
+        "albedo": {
+          "file": "textures/pilot_paint_albedo.webp",
+          "bytes": 1922
+        },
+        "normal": {
+          "file": "textures/pilot_paint_normal.webp",
+          "bytes": 51162
+        },
+        "orm": {
+          "file": "textures/pilot_paint_orm.webp",
+          "bytes": 19922
+        },
+        "albedo_lo": {
+          "file": "textures/pilot_paint_albedo_lo.webp",
+          "bytes": 524
+        },
+        "normal_lo": {
+          "file": "textures/pilot_paint_normal_lo.webp",
+          "bytes": 1612
+        },
+        "orm_lo": {
+          "file": "textures/pilot_paint_orm_lo.webp",
+          "bytes": 2258
+        }
+      }
     }
   },
   "sky": {
@@ -386,6 +536,41 @@
       "triangles": 6516,
       "length": 4.2,
       "width": 1.79
+    },
+    "pilot_tree_canopy": {
+      "file": "models/pilot_tree_canopy.glb",
+      "bytes": 176840,
+      "triangles": 2210,
+      "height": 6.3,
+      "crown": 6.5
+    },
+    "pilot_tree_vertical": {
+      "file": "models/pilot_tree_vertical.glb",
+      "bytes": 152580,
+      "triangles": 1854,
+      "height": 7.0,
+      "crown": 4.0
+    },
+    "pilot_shrub_silver": {
+      "file": "models/pilot_shrub_silver.glb",
+      "bytes": 38344,
+      "triangles": 348,
+      "height": 0.9,
+      "crown": 1.4
+    },
+    "pilot_groundcover": {
+      "file": "models/pilot_groundcover.glb",
+      "bytes": 37084,
+      "triangles": 348,
+      "height": 0.35,
+      "crown": 1.4
+    },
+    "pilot_grass_tuft": {
+      "file": "models/pilot_grass_tuft.glb",
+      "bytes": 38312,
+      "triangles": 492,
+      "height": 0.65,
+      "crown": 1.0
     }
   },
   "ktx2": {
@@ -393,5 +578,15 @@
     "albedo": "BasisLZ/ETC1S sRGB",
     "orm": "BasisLZ/ETC1S linear",
     "normal": "BasisLZ/ETC1S linear, qlevel 255"
+  },
+  "pilotVegetation": {
+    "version": 1,
+    "generator": "scripts/blender/build_pilot_vegetation.py",
+    "license": "Assets procedurais proprios; uso comercial permitido no projeto."
+  },
+  "pilotSurfaces": {
+    "version": 1,
+    "generator": "scripts/blender/build_pilot_surfaces.py",
+    "procedural": true
   }
 }
