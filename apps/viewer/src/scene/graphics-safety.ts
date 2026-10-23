@@ -1,9 +1,8 @@
 import type {Scene} from './babylon';
 
-/** WebGL usa o caminho conservador por padrao. Seguro=1 tambem forca esse caminho no motor. */
-export function compatibilityMode(webgpu: boolean, search = '') {
-  const safe = new URLSearchParams(search).get('seguro');
-  return safe === '1' || (!webgpu && safe !== '0');
+/** Seguranca e uma escolha explicita, nao uma penalidade por usar WebGL/IP ou celular. */
+export function compatibilityMode(_webgpu: boolean, search = '', _mobile = false) {
+  return new URLSearchParams(search).get('seguro') === '1';
 }
 
 /** Limita o buffer REAL, nao so o tamanho CSS. Monitores 4K/retina nao multiplicam os alvos de render. */

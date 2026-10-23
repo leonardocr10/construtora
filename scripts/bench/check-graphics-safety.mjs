@@ -4,10 +4,12 @@ import {Observable} from '@babylonjs/core/Misc/observable.js';
 const server=await createServer({root:'apps/viewer',configFile:false,cacheDir:'node_modules/.vite-safety-check',optimizeDeps:{noDiscovery:true},server:{middlewareMode:true},appType:'custom'});
 try {
   const {compatibilityMode,renderScaling,waitForVisibleFrame}=await server.ssrLoadModule('/src/scene/graphics-safety.ts');
-  assert.equal(compatibilityMode(false,''),true);
+  assert.equal(compatibilityMode(false,''),false,'WebGL/IP nao implica qualidade Baixa.');
   assert.equal(compatibilityMode(true,''),false);
+  assert.equal(compatibilityMode(true,'',true),false,'Celular tambem inicia em Alta.');
   assert.equal(compatibilityMode(true,'?seguro=1'),true);
   assert.equal(compatibilityMode(false,'?seguro=0'),false);
+  assert.equal(compatibilityMode(false,'?seguro=1',true),true,'Modo seguro explicito continua disponivel.');
   for(const [w,h,dpr]of [[1920,1080,1],[3840,2160,2],[2560,1440,1.5],[390,844,3]])for(const safe of [false,true]){
     const scale=renderScaling(w,h,dpr,2,safe);
     assert.ok((w/scale)*(h/scale)<=(safe?1280*720:1920*1080)+1,'Orcamento real de pixels.');
@@ -34,5 +36,5 @@ try {
   World.prototype.applyInset.call(fake);
   assert.equal(projections,1,'Observable da camera nao pode reentrar infinitamente.');assert.equal(adjustments,1);
   fake.engine.getRenderHeight=()=>0;World.prototype.applyInset.call(fake);assert.equal(projections,1,'Nao recalcular camera sem buffer valido.');
-  console.log('OK: modo WebGL conservador, limite de pixels 4K/retina, primeiro quadro e falhas sem loop.');
+  console.log('OK: WebGL/IP sem bloqueio de qualidade, modo seguro explicito, pixels limitados e falhas sem loop.');
 } finally {await server.close();}

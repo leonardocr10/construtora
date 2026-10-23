@@ -5,7 +5,7 @@
 - O carregador de tela inteira sai quando o terreno esta pronto (`site.baseReady`), nao quando todos os modelos e o bairro terminaram. As torres parametricas permitem navegar e selecionar durante a troca pelos GLB detalhados.
 - `__vista.interactiveAt` mede essa liberacao. `__vista.readyAt` continua medindo o termino completo: nao confundir os dois tempos.
 - Duas torres detalhadas por vez, com fila que continua apos falhas. O entorno e importado depois do terreno e nao impede a abertura. O codigo do passeio interno so e importado ao clicar em "Ver por dentro", com protecao contra clique duplicado e tratamento de erro.
-- Computadores novos iniciam em Alta ou Media, celulares/GPU fraca conservam a deteccao existente. Ultra continua disponivel manualmente; preferencias ja salvas nao sao sobrescritas. Quem havia salvo Ultra deve selecionar outra qualidade em Vistas se quiser menos custo grafico.
+- Toda abertura agora inicia em Alta, inclusive por IP/HTTP e no celular, sem rebaixamento automatico. A escolha manual vale durante a visita, mas preferencias antigas nao afetam a proxima abertura. Ultra continua opcional; `?seguro=1` e a excecao explicita que inicia em Baixa.
 - O visualizador pede `GET /api/v1/public/assets/:id?optimized=1` para torres. As demais imagens e os downloads originais continuam na rota original.
 
 ## Entrega compactada

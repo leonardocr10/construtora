@@ -4,6 +4,7 @@ import {
 } from './babylon';
 import { createEngine } from './engine';
 import {compatibilityMode, renderScaling, waitForVisibleFrame} from './graphics-safety';
+import {isMobile} from './quality';
 import { box as boxGeo, compose, cylinder as cylinderGeo, merge, meshFrom, pbr, polygon, rgb, shadows, transform, translate, tube, type Geo, type MaterialOptions } from './geometry';
 import { skyEnvironment } from './world';
 import type { PlanLayout, Point, RoomKind } from '../types';
@@ -487,7 +488,7 @@ export class InteriorViewer {
     const { engine, canvas, webgpu } = await createEngine(stage);
     if (this.closed) { engine.dispose(); return; }
     this.engine = engine;
-    this.compatibilityMode = compatibilityMode(webgpu, location.search);
+    this.compatibilityMode = compatibilityMode(webgpu, location.search, isMobile());
     engine.setHardwareScalingLevel(renderScaling(innerWidth, innerHeight, devicePixelRatio, 1.5, this.compatibilityMode));
     const scene = this.scene = new Scene(engine);
     scene.useRightHandedSystem = true;

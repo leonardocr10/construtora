@@ -4,6 +4,7 @@ import type { Library } from './library';
 import {configureFacadeGlass,glassReflection} from './facade-glass';
 import {applyFacadePalette} from './facade-materials';
 import {buildFacadeDetails} from './facade-details';
+import {loadOnce} from './load-queue';
 import { box as boxGeo, compose, instanced, merge, meshFrom, offsetLightness, pbr, rgb, shadows, translate } from './geometry';
 import type { Building, TowerModel, UnitSlot, UnitStatus } from '../types';
 
@@ -42,8 +43,10 @@ export interface TowerObject {
   setHover(on: boolean): void;
   /** Ponto (mundo) no topo do volume de um apartamento, para o rótulo com o número. */
   unitTop(unitId: string): Vector3 | null;
-  /** Resolve quando o modelo GLB da torre (se houver) terminou de carregar. */
+  /** Tarefa inicial. No modo sob demanda, o proxy parametrico ja esta pronto. */
   loaded: Promise<void>;
+  /** Carrega o GLB uma unica vez; selecao/recorte continuam funcionando durante a carga. */
+  loadDetails(): Promise<void>;
   /** Volumes maciços (no espaço de `group`) que a câmera não atravessa: corpo e varandas, até a altura do recorte. */
   solids(): SolidBox[];
 }
@@ -70,7 +73,7 @@ function localBox(meshes: Mesh[], node: TransformNode): SolidBox | null {
  * Torre paramétrica: corpo com janelas por pavimento, núcleo de circulação e varandas na cor de destaque,
  * e um volume clicável por apartamento (posição definida pelo final em model3d.unitSlots).
  */
-export function buildTower(scene: Scene, building: Building, parent: TransformNode, glbUrl: string | null = null, library: Library | null = null, refined = false, schedule: <T>(job: () => Promise<T>) => Promise<T> = job => job()): TowerObject {
+export function buildTower(scene: Scene, building: Building, parent: TransformNode, glbUrl: string | null = null, library: Library | null = null, refined = false, schedule: <T>(job: () => Promise<T>) => Promise<T> = job => job(), deferDetails = false): TowerObject {
   const model: TowerModel = building.model3d ?? { width: 32, depth: 16 };
   const floors = building.floorCount ?? (Math.max(...building.units.map((u) => u.floor ?? 0), 0) + 1);
   const h = building.floorHeight ?? 2.9;
@@ -285,7 +288,8 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
 
   // Modelo detalhado do Blender (scripts/blender/build_tower.py): substitui o corpo paramétrico. Os volumes por
   // apartamento, as faixas de pavimento, a torre recortada e a caixa de clique continuam os daqui.
-  const loaded = glbUrl ? schedule(async () => {
+  const loadDetails = loadOnce(() => glbUrl ? schedule(async () => {
+    group.metadata = {...group.metadata, detailState: 'loading'};
     const container = await LoadAssetContainerAsync(glbUrl, scene, { pluginExtension: '.glb' });
     if (scene.metadata?.graphicsFailed) { container.dispose(); return; }
     container.addAllToScene();
@@ -334,10 +338,16 @@ export function buildTower(scene: Scene, building: Building, parent: TransformNo
     if (shell) solidBoxes = [shell, ...(balcony ? [balcony] : [])];
     rememberBody();applyBodyTone();
     applyCut();
-  }).catch((error) => console.warn(`Modelo 3D da torre ${building.name} indisponível; usando o paramétrico`, error)) : Promise.resolve();
+    group.metadata = {...group.metadata, detailState: 'ready'};
+  }).catch((error) => {
+    group.metadata = {...group.metadata, detailState: 'fallback'};
+    console.warn(`Modelo 3D da torre ${building.name} indisponível; usando o paramétrico`, error);
+  }) : Promise.resolve());
+  group.metadata = {...group.metadata, detailState: glbUrl ? 'deferred' : 'parametric'};
+  const loaded = deferDetails ? Promise.resolve() : loadDetails();
 
   return {
-    building, group, top, center, height: H, unitMeshes, floorBands, pickables: [hit, ...unitMeshes.values()], loaded,
+    building, group, top, center, height: H, unitMeshes, floorBands, pickables: [hit, ...unitMeshes.values()], loaded, loadDetails,
     solids() {
       // Com um andar recortado, só o que está abaixo dele é maciço (a câmera pode descer para ver os apartamentos).
       const cut = unitsFloor != null ? unitsFloor * h : Infinity;

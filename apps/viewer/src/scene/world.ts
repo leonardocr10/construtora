@@ -4,10 +4,10 @@ import {
   type BaseTexture,
 } from './babylon';
 import type { Library } from './library';
-import { createEngine, gpuName } from './engine';
+import { createEngine } from './engine';
 import { rgb } from './geometry';
 import { Sky } from './sky';
-import { detectQuality, qualityLevels, savedQuality, saveQuality, type QualityLevel } from './quality';
+import { initialQuality, isMobile, qualityLevels, type QualityLevel } from './quality';
 import {compatibilityMode, renderScaling} from './graphics-safety';
 
 export type LightMode = 'day' | 'sunset';
@@ -62,8 +62,6 @@ export class World {
   readonly hemi: HemisphericLight;
   readonly webgpu: boolean;
   quality: QualityLevel;
-  /** O visitante escolheu a qualidade (não rebaixa sozinho). */
-  private qualityChosen: boolean;
   private shadow: CascadedShadowGenerator | null = null;
   private shadowDirty = true;
   private pipeline: DefaultRenderingPipeline | null = null;
@@ -82,6 +80,7 @@ export class World {
   /** Pausa a renderização (planta 3D aberta por cima). */
   paused = false;
   readonly compatibilityMode: boolean;
+  readonly mobile: boolean;
   graphicsError: Error | null = null;
 
   static async create(host: HTMLElement, labelLayer: HTMLElement) {
@@ -91,7 +90,8 @@ export class World {
 
   private constructor(private readonly host: HTMLElement, private readonly labelLayer: HTMLElement, readonly engine: AbstractEngine, readonly canvas: HTMLCanvasElement, webgpu: boolean) {
     this.webgpu = webgpu;
-    this.compatibilityMode = compatibilityMode(webgpu, location.search);
+    this.mobile = isMobile();
+    this.compatibilityMode = compatibilityMode(webgpu, location.search, this.mobile);
     const scene = this.scene = new Scene(engine);
     scene.useRightHandedSystem = true;
     scene.clearColor = new Color4(0.9, 0.93, 0.92, 1);
@@ -129,8 +129,7 @@ export class World {
 
     this.sky = new Sky(scene);
 
-    this.quality = this.compatibilityMode ? 'eco' : savedQuality() ?? detectQuality(gpuName(engine));
-    this.qualityChosen = !this.compatibilityMode && savedQuality() != null;
+    this.quality = initialQuality(this.compatibilityMode);
     this.applyQuality();
     this.setMode('day', true);
 
@@ -154,12 +153,12 @@ export class World {
 
   // ——— qualidade ———
 
-  /** Troca o nível de qualidade (sombras, SSAO, antisserrilhado e resolução) e lembra a escolha. */
-  setQuality(level: QualityLevel, chosen = true) {
+  /** Troca durante a visita; a proxima abertura volta para Alta. */
+  setQuality(level: QualityLevel, _chosen = true) {
     if (this.compatibilityMode) level = 'eco';
     this.quality = level;
-    if (chosen && !this.compatibilityMode) { this.qualityChosen = true; saveQuality(level); }
     this.applyQuality();
+    this.qualityListeners.forEach((fn) => fn(this.quality));
   }
 
   private applyQuality() {
@@ -464,10 +463,9 @@ export class World {
   // ——— quadro ———
 
   private lastFrame = performance.now();
-  private slowSince = 0;
   private frame() {
     const now = performance.now();
-    if (document.hidden || now - this.lastFrame < 1000 / (this.compatibilityMode ? 30 : 60) - 1) return;
+    if (document.hidden || now - this.lastFrame < 1000 / (this.compatibilityMode || this.mobile ? 30 : 60) - 1) return;
     const dt = Math.min((now - this.lastFrame) / 1000, 0.1); this.lastFrame = now;
     if (this.paused) return;
     if (this.flight) {
@@ -496,22 +494,9 @@ export class World {
     this.refreshShadowCasters();
     this.scene.render();
     this.updateLabels();
-    this.autoDowngrade(now);
-  }
-
-  /** Sem escolha do visitante, rebaixa um nível se a taxa de quadros ficar muito baixa por alguns segundos. */
-  private autoDowngrade(now: number) {
-    if (this.qualityChosen || this.quality === 'eco' || document.hidden) { this.slowSince = 0; return; }
-    if (this.engine.getFps() >= 22) { this.slowSince = 0; return; }
-    if (!this.slowSince) { this.slowSince = now; return; }
-    if (now - this.slowSince < 5000) return;
-    this.slowSince = 0;
-    const order: QualityLevel[] = ['eco', 'balanced', 'high', 'ultra'];
-    this.setQuality(order[order.indexOf(this.quality) - 1], false);
-    this.qualityListeners.forEach((fn) => fn(this.quality));
   }
   private readonly qualityListeners: ((level: QualityLevel) => void)[] = [];
-  /** Avisa quando a qualidade muda sozinha (para atualizar o seletor). */
+  /** Mantem o seletor sincronizado com o nivel efetivamente aplicado. */
   onQualityChange(fn: (level: QualityLevel) => void) { this.qualityListeners.push(fn); }
 
   private updateLabels() {

@@ -11,7 +11,7 @@ Relato: a interface/rotulos aparecem sem a cena, e o monitor inteiro de outra ma
 
 ## Comportamento novo
 
-- WebGL inicia automaticamente em compatibilidade: perfil Baixa, sem pos-processamento HDR/MRT, SSAO, bloom, MSAA ou sombras. O seletor fica limitado, sem apagar a preferencia salva para WebGPU.
+- Atualizacao: a abertura normal inicia sempre em Alta, inclusive WebGL/IP e celular, sem rebaixamento automatico. Preferencias antigas nao determinam a abertura. Compatibilidade agora exige `?seguro=1`: perfil Baixa, sem pos-processamento HDR/MRT, SSAO, bloom, MSAA ou sombras, com seletor limitado.
 - Limite de aproximadamente 1280 x 720 pixels de area no buffer de compatibilidade, preservando a proporcao da janela. Os perfis normais ficam limitados a area Full HD. Isso nao altera o tamanho dos controles HTML.
 - Compatibilidade: alvo de ate 30 quadros/s, mil arvores no entorno e uma torre detalhada carregada de cada vez. A renderizacao para em abas ocultas. Sao limites, nao garantias de FPS.
 - Passeio: mesmo limite de resolucao, ate quatro luzes por material, sem pipeline/sombras no modo de compatibilidade. Caminho normal reduzido a oito luzes, MSAA 2x e sombra 1024. O carregador interno tambem espera quadros visiveis.
@@ -24,7 +24,7 @@ Depois de publicar este build, acrescentar `?seguro=1` ao endereco, por exemplo:
 
 `http://localhost:4300/union-vista?seguro=1`
 
-Isso forca WebGL conservador mesmo em localhost/HTTPS com WebGPU disponivel. A URL sem parametro tambem entra em compatibilidade quando so WebGL esta disponivel. `seguro=0` e uma saida de diagnostico para desenvolvedores; nao usar numa maquina que ja apresentou piscadas de monitor.
+Isso forca WebGL conservador mesmo em localhost/HTTPS com WebGPU disponivel. Sem parametro, o sistema abre em Alta tambem por IP/HTTP usando WebGL; `seguro=0` nao e mais necessario para liberar esse caminho. Na maquina que apresentou piscadas, usar `seguro=1` e investigar o driver antes de testar Alta novamente.
 
 Se o monitor inteiro piscar novamente, fechar a aba e investigar navegador/GPU/driver antes de repetir testes. Nao desativar protecoes de timeout do driver ou forcar aceleracao como tentativa de conserto.
 

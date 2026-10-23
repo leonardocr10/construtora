@@ -13,3 +13,9 @@ export function createLoadQueue(concurrency = 2) {
     run();
   });
 }
+
+/** Uma carga sob demanda e compartilhada por todos os cliques na mesma torre. */
+export function loadOnce<T>(job: () => Promise<T>) {
+  let pending: Promise<T> | null = null;
+  return () => pending ??= Promise.resolve().then(job);
+}

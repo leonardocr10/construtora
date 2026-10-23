@@ -55,7 +55,7 @@ async function start() {
   world.setArchitecturalLighting(dev.slug === 'union-vista' && new URLSearchParams(location.search).get('acabamento') !== 'original');
   const siteImage = dev.viewer.layout?.siteImageAssetId ? api.assetUrl(dev.viewer.layout.siteImageAssetId) : null;
   const towerModels = new Map(dev.buildings.filter((b) => b.model3d?.glb?.assetId).map((b) => [b.id, api.modelUrl(b.model3d!.glb!.assetId)] as const));
-  site = buildSite(world.scene, dev, siteImage, library, towerModels, world.compatibilityMode ? 1 : 2);
+  site = buildSite(world.scene, dev, siteImage, library, towerModels, world.compatibilityMode || world.mobile ? 1 : 2, world.mobile);
   world.onDusk((t) => { for (const tower of site.towers) tower.setDusk(t); });
   // A câmera não entra nas torres: a aproximação para na fachada (na janela).
   for (const tower of site.towers) world.addObstacle(tower.group, () => tower.solids());
@@ -72,7 +72,7 @@ async function start() {
   overview(0.01);
 
   $('loading-text').textContent = 'Preparando o terreno';
-  const renderer = world.compatibilityMode ? 'WebGL · compatibilidade' : world.webgpu ? 'WebGPU' : 'WebGL2';
+  const renderer = `${world.webgpu ? 'WebGPU' : 'WebGL2'}${world.compatibilityMode ? ' · modo leve' : ''}`;
   $('sources').textContent = 'Carregando detalhes e entorno…';
   // Entorno e detalhes nao bloqueiam o primeiro quadro navegavel.
   const surroundingsReady = (async () => {
@@ -86,7 +86,7 @@ async function start() {
     const pilotDetail=slug==='union-vista'&&library?.has('pilot_tree_vertical')&&pilotTower?.position&&new URLSearchParams(location.search).get('vegetacao')!=='original'?{
       library,contains:(p:Point)=>{const v=Vector3.TransformCoordinates(new Vector3(p[0],0,p[1]),pilotInverse),b=pilotTower.position!,a=(b.rotation??0)*Math.PI/180,dx=v.x-b.x,dz=v.z-b.z;return Math.abs(Math.cos(a)*dx+Math.sin(a)*dz)<(pilotTower.model3d?.width??36)/2+18&&Math.abs(-Math.sin(a)*dx+Math.cos(a)*dz)<(pilotTower.model3d?.depth??16.8)/2+40;},
     }:undefined;
-    const result = buildSurroundings(world.scene, surroundings, site.lotWorld, qualityLevels[world.quality].trees,pilotDetail);
+    const result = buildSurroundings(world.scene, surroundings, site.lotWorld, world.mobile ? 400 : Math.min(1000, qualityLevels[world.quality].trees),pilotDetail,world.mobile ? 650 : surroundings.radius);
     await result.ready;
     // Entorno é estático: matrizes congeladas (menos trabalho por quadro).
     for (const mesh of result.group.getChildMeshes()) mesh.freezeWorldMatrix();
@@ -305,6 +305,7 @@ function overview(duration = 1.8) {
 }
 
 function selectTower(tower: TowerObject) {
+  void tower.loadDetails();
   hover?.clear();
   if (state.tower && state.tower !== tower) { state.tower.setUnitsVisible(false); state.tower.setFloorHighlight(null); state.tower.setHover(false); }
   tower.setHover(true); // a torre escolhida fica marcada

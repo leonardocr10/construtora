@@ -121,7 +121,7 @@ export interface SurroundingsResult { group: TransformNode; illustrativeHouses: 
  * Entorno real a partir do OpenStreetMap: ruas, áreas verdes, água e edificações mapeadas.
  * Onde o OSM não tem casas, gera casas ilustrativas ao longo das ruas residenciais.
  */
-export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: Point[], maxTrees = 6000, detail?:{library:Library;contains:(p:Point)=>boolean}): SurroundingsResult {
+export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: Point[], maxTrees = 6000, detail?:{library:Library;contains:(p:Point)=>boolean}, decorationRadius = data.radius): SurroundingsResult {
   const group = new TransformNode('surroundings', scene);
   const random = seeded(42);
   const flat = (name: string, geo: Geo, material: ReturnType<typeof pbr>) => shadows(meshFrom(name, geo, scene, material, group), false);
@@ -180,7 +180,7 @@ export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: P
 
   const mappedBuildings=buildContextBuildings(scene,data,group);
 
-  const sites=placeHouses(network,exclusion,data.buildings.map(b=>b.points),data.radius);
+  const sites=placeHouses(network,exclusion,data.buildings.map(b=>b.points),Math.min(data.radius,decorationRadius));
   const houses:Matrix[]=[],roofs:Matrix[]=[],slabs:Matrix[]=[],paths:Matrix[]=[],awnings:Matrix[]=[];
   for(const s of sites){
     const [x,z]=s.center,w=s.width,d=s.depth,h=s.height;
@@ -220,7 +220,7 @@ export function buildSurroundings(scene: Scene, data: Surroundings, exclusion: P
   if (trees.length) shadows(instanced('osm-trees', crownGeometry(), scene, pbr(scene, 'osm-trees', { color: 0x5b9a45, roughness: 0.9 }), trees, group), true);
   // Arborização de calçadas e terrenos vazios: sem ela o entorno é um chão liso entre casas soltas.
   const detailedTrees:Matrix[]=[];
-  const vegetation=buildVegetation(scene,group,{roads:data.roads,footprints:[...sites.map(s=>s.footprint),...data.buildings.map(b=>b.points)],exclusion,onRoad:(p,clearance)=>grid.near(p,clearance),radius:data.radius,random,maxTrees,detail:detail?{contains:detail.contains,place:(p,height,spin)=>{const s=height/7;detailedTrees.push(compose(p[0],0,p[1],0,spin,0,s,s,s));}}:undefined});
+  const vegetation=buildVegetation(scene,group,{roads:data.roads,footprints:[...sites.map(s=>s.footprint),...data.buildings.map(b=>b.points)],exclusion,onRoad:(p,clearance)=>grid.near(p,clearance),radius:Math.min(data.radius,decorationRadius),random,maxTrees,detail:detail?{contains:detail.contains,place:(p,height,spin)=>{const s=height/7;detailedTrees.push(compose(p[0],0,p[1],0,spin,0,s,s,s));}}:undefined});
   const ready=detail&&detailedTrees.length?detail.library.instances('pilot_tree_vertical',detailedTrees.map(matrix=>({matrix})),{parent:group,chunk:100,lodDistance:130,cull:700,shadowLevels:2}):Promise.resolve();
   group.metadata={roadRepairs:network.repairs,houseCount:sites.length,roadSurface:'union-buffer',sidewalks:'corridor-minus-asphalt',mappedBuildings,vegetation:vegetation.count,detailedTrees:detailedTrees.length};
   return { group, illustrativeHouses: houses.length, roadLabels,ready };

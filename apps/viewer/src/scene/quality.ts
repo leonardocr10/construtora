@@ -1,6 +1,6 @@
 /**
- * Níveis de qualidade gráfica. O visitante escolhe no painel de vistas; sem escolha, o nível é
- * detectado pelo aparelho (celular e GPU fraca começam mais baixo) e lembrado neste navegador.
+ * Níveis de qualidade gráfica. Toda abertura inicia em Alta, inclusive via IP/HTTP e no celular.
+ * A escolha manual vale durante a visita; apenas o modo seguro explicito inicia em Baixa.
  */
 export type QualityLevel = 'eco' | 'balanced' | 'high' | 'ultra';
 
@@ -33,6 +33,9 @@ export const qualityLevels: Record<QualityLevel, QualitySettings> = {
 export const qualityOrder: QualityLevel[] = ['eco', 'balanced', 'high', 'ultra'];
 
 const storageKey = 'vistahub.quality';
+
+/** Nao reutilizar preferencias antigas de Baixa/Ultra: cada abertura comeca em Alta. */
+export function initialQuality(safe: boolean): QualityLevel { return safe ? 'eco' : 'high'; }
 
 /** Escolha salva pelo visitante (null quando nunca escolheu). */
 export function savedQuality(): QualityLevel | null {

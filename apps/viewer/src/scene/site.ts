@@ -160,7 +160,7 @@ export interface SiteResult {
  * Terreno do empreendimento: o lote recebe a própria arte da implantação como textura e as torres
  * paramétricas são erguidas sobre ela. O grupo é girado pelo azimute para casar com o mapa real.
  */
-export function buildSite(scene: Scene, development: Development, siteImageUrl: string | null, library: Library | null = null, towerModels: Map<string, string> = new Map(), modelConcurrency = 2): SiteResult {
+export function buildSite(scene: Scene, development: Development, siteImageUrl: string | null, library: Library | null = null, towerModels: Map<string, string> = new Map(), modelConcurrency = 2, deferModels = false): SiteResult {
   const layout = development.viewer.layout;
   // Pronto quando a arte foi processada e os modelos (carros, vegetação, torres) carregaram.
   let resolveSite!: () => void; const siteLoaded = new Promise<void>((resolve) => (resolveSite = resolve));
@@ -340,7 +340,7 @@ export function buildSite(scene: Scene, development: Development, siteImageUrl: 
     if (scene.metadata?.graphicsFailed) throw new Error('Detalhes cancelados apos falha grafica');
     return job();
   });
-  const towers = development.buildings.map((building) => buildTower(scene, building, group, towerModels.get(building.id) ?? null, library, refineFacade && building.code === 'TORRE-03', scheduleTower));
+  const towers = development.buildings.map((building) => buildTower(scene, building, group, towerModels.get(building.id) ?? null, library, refineFacade && building.code === 'TORRE-03', scheduleTower, deferModels));
   for (const tower of towers) readyTasks.push(tower.loaded);
   // Recalcula as âncoras já com a rotação do terreno aplicada.
   for (const tower of towers) {
